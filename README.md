@@ -38,6 +38,12 @@ If your repos follow different layouts, adjust the merge Dockerfiles or provide 
 
 If the external repos are private, add a `GH_PAT` secret with `repo` scope so Actions can check them out.
 
+CI troubleshooting (GHCR permissions):
+- If you see `denied: permission_denied: write_package` while pushing to GHCR, add these repo secrets:
+  - `GHCR_PAT`: Personal Access Token with `write:packages` (and optionally `delete:packages`), tied to the account that owns `ghcr.io/<owner>`.
+  - `GHCR_USERNAME`: Set to that account’s username (optional; defaults to `github.actor`).
+  The workflow prefers `GHCR_PAT` if present; otherwise it falls back to `GITHUB_TOKEN`.
+
 ## Control & Monitoring
 
 Run a merged image (example with GHCR tag):

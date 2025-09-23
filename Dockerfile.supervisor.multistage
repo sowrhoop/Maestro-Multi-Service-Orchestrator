@@ -1,0 +1,77 @@
+###############################################
+# Multi-stage build: combine two external repos
+# into a single Supervisor-managed image.
+###############################################
+
+# Stage: Service A source (Python or static)
+FROM python:3.11-slim AS svc_a_src
+WORKDIR /app
+# Expect the workflow to have checked out Service A under external/service-a
+COPY external/service-a/ /app/
+
+# Stage: Service B build (Node)
+FROM node:20-slim AS svc_b_build
+WORKDIR /app
+# Expect the workflow to have checked out Service B under external/service-b
+COPY external/service-b/package*.json /app/
+RUN npm ci --omit=dev || npm install --no-audit --no-fund
+COPY external/service-b/ /app/
+RUN npm prune --omit=dev || true
+
+# Final runtime image with Supervisor
+FROM debian:bookworm-slim
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+    python3 \
+    python3-venv \
+    python3-pip \
+    nodejs \
+    npm \
+    supervisor \
+    curl \
+    ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /opt/services
+
+# Create dedicated unprivileged users for each service
+RUN useradd -r -u 10001 -m -d /home/svc_a -s /usr/sbin/nologin svc_a \
+ && useradd -r -u 10002 -m -d /home/svc_b -s /usr/sbin/nologin svc_b
+
+# Python venv to keep site-packages isolated
+RUN python3 -m venv /opt/venv-a
+ENV PATH=/opt/venv-a/bin:$PATH
+
+# Copy Service A payload and install deps if present
+COPY --from=svc_a_src /app/ /opt/services/service-a/
+RUN if [ -f /opt/services/service-a/requirements.txt ]; then \
+      /opt/venv-a/bin/pip install --no-cache-dir -r /opt/services/service-a/requirements.txt; \
+    fi
+
+# Copy Service B payload from build stage (includes node_modules)
+COPY --from=svc_b_build /app/ /opt/services/service-b/
+
+# Restrict code directories
+RUN chown -R svc_a:svc_a /opt/services/service-a \
+ && chown -R svc_b:svc_b /opt/services/service-b \
+ && chmod -R 750 /opt/services/service-a /opt/services/service-b
+
+# Supervisor config, healthcheck and entrypoint
+COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+COPY healthcheck.sh /healthcheck.sh
+COPY scripts/entrypoint.sh /entrypoint.sh
+RUN chmod +x /healthcheck.sh /entrypoint.sh
+
+EXPOSE 8080 9090
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 CMD /healthcheck.sh || exit 1
+
+LABEL org.opencontainers.image.title="two-services supervisor (multistage)" \
+      org.opencontainers.image.description="Supervisor image running service-a and service-b built via multi-stage from external sources" \
+      org.opencontainers.image.licenses="MIT"
+
+ENTRYPOINT ["/entrypoint.sh"]
+
