@@ -7,14 +7,8 @@ permissions:
   security-events: write
 
 on:
-  push:
-    branches: [ main, master ]
-    paths:
-      - 'Dockerfile.supervisor'
-      - 'supervisord.conf'
-      - 'services/service-a/**'
-      - 'services/service-b/**'
-      - '.github/workflows/build-and-push.yml'
+  # Disabled automatic push triggers to avoid accidental runs in the orchestrator repo.
+  # Use the merge workflow instead, or run this manually for the monorepo layout.
   workflow_dispatch: {}
 
 concurrency:
