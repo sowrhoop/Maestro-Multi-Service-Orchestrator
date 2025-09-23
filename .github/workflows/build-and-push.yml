@@ -31,6 +31,16 @@ jobs:
           persist-credentials: false
           fetch-depth: 1
 
+      - name: Check monorepo layout
+        id: layout
+        shell: bash
+        run: |
+          if [ -d services/service-a ] && [ -d services/service-b ]; then
+            echo "monorepo=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "monorepo=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
@@ -65,7 +75,8 @@ jobs:
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
 
-      - name: Build and push to GHCR
+      - name: Build and push to GHCR (monorepo)
+        if: steps.layout.outputs.monorepo == 'true'
         id: build
         uses: docker/build-push-action@v6
         with:
@@ -80,10 +91,17 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Skip build (not a monorepo)
+        if: steps.layout.outputs.monorepo != 'true'
+        run: |
+          echo "This workflow is for the monorepo layout (services/service-a and services/service-b)." \
+               "Use the 'Build Service A & B, then Merge' workflow for external repos or prebuilt images." && exit 0
+
       - name: Install Cosign
         uses: sigstore/cosign-installer@v3
 
       - name: Sign image (keyless via OIDC)
+        if: steps.layout.outputs.monorepo == 'true'
         env:
           COSIGN_EXPERIMENTAL: "1"
           IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
@@ -92,6 +110,7 @@ jobs:
           cosign sign --yes ${IMAGE_NAME}@${IMAGE_DIGEST}
 
       - name: Trivy vulnerability scan
+        if: steps.layout.outputs.monorepo == 'true'
         uses: aquasecurity/trivy-action@0.28.0
         with:
           image-ref: ghcr.io/${{ steps.ghcr.outputs.owner }}/two-services@${{ steps.build.outputs.digest }}
@@ -103,6 +122,7 @@ jobs:
           exit-code: '0'
 
       - name: Upload Trivy report to code scanning
+        if: steps.layout.outputs.monorepo == 'true'
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: trivy-results.sarif
