@@ -34,6 +34,8 @@ on:
         description: "Use GPU base for merged image (CUDA)"
         type: boolean
         default: false
+  repository_dispatch:
+    types: [merge-two, project-updated]
 
 concurrency:
   group: build-merge-${{ github.ref }}
@@ -45,6 +47,41 @@ jobs:
     env:
       OWNER: ${{ github.repository_owner }}
     steps:
+      - name: Resolve parameters (dispatch or manual)
+        id: params
+        shell: bash
+        env:
+          IN_SA_REPO: ${{ inputs.service_a_repo }}
+          IN_SA_REF: ${{ inputs.service_a_ref }}
+          IN_SA_DF: ${{ inputs.service_a_dockerfile }}
+          IN_SB_REPO: ${{ inputs.service_b_repo }}
+          IN_SB_REF: ${{ inputs.service_b_ref }}
+          IN_SB_DF: ${{ inputs.service_b_dockerfile }}
+          IN_GPU: ${{ inputs.use_gpu_base }}
+          PL_SA_REPO: ${{ github.event.client_payload.service_a_repo }}
+          PL_SA_REF: ${{ github.event.client_payload.service_a_ref }}
+          PL_SA_DF: ${{ github.event.client_payload.service_a_dockerfile }}
+          PL_SB_REPO: ${{ github.event.client_payload.service_b_repo }}
+          PL_SB_REF: ${{ github.event.client_payload.service_b_ref }}
+          PL_SB_DF: ${{ github.event.client_payload.service_b_dockerfile }}
+          PL_GPU: ${{ github.event.client_payload.use_gpu_base }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          SA_REPO=${IN_SA_REPO:-${PL_SA_REPO:-"${OWNER}/project-1"}}
+          SA_REF=${IN_SA_REF:-${PL_SA_REF:-main}}
+          SA_DF=${IN_SA_DF:-${PL_SA_DF:-Dockerfile}}
+          SB_REPO=${IN_SB_REPO:-${PL_SB_REPO:-"${OWNER}/project-2"}}
+          SB_REF=${IN_SB_REF:-${PL_SB_REF:-main}}
+          SB_DF=${IN_SB_DF:-${PL_SB_DF:-Dockerfile}}
+          GPU_FLAG=${IN_GPU:-${PL_GPU:-false}}
+
+          echo "service_a_repo=${SA_REPO}" >> "$GITHUB_OUTPUT"
+          echo "service_a_ref=${SA_REF}" >> "$GITHUB_OUTPUT"
+          echo "service_a_dockerfile=${SA_DF}" >> "$GITHUB_OUTPUT"
+          echo "service_b_repo=${SB_REPO}" >> "$GITHUB_OUTPUT"
+          echo "service_b_ref=${SB_REF}" >> "$GITHUB_OUTPUT"
+          echo "service_b_dockerfile=${SB_DF}" >> "$GITHUB_OUTPUT"
+          echo "use_gpu_base=${GPU_FLAG}" >> "$GITHUB_OUTPUT"
       - name: Checkout orchestrator repo
         uses: actions/checkout@v4
         with:
@@ -53,17 +90,17 @@ jobs:
       - name: Checkout Service A
         uses: actions/checkout@v4
         with:
-          repository: ${{ inputs.service_a_repo }}
-          ref: ${{ inputs.service_a_ref }}
-          token: ${{ secrets.GH_PAT || github.token }}
+          repository: ${{ steps.params.outputs.service_a_repo }}
+          ref: ${{ steps.params.outputs.service_a_ref }}
+          token: ${{ secrets.GH_PAT != '' && secrets.GH_PAT || github.token }}
           path: external/service-a
 
       - name: Checkout Service B
         uses: actions/checkout@v4
         with:
-          repository: ${{ inputs.service_b_repo }}
-          ref: ${{ inputs.service_b_ref }}
-          token: ${{ secrets.GH_PAT || github.token }}
+          repository: ${{ steps.params.outputs.service_b_repo }}
+          ref: ${{ steps.params.outputs.service_b_ref }}
+          token: ${{ secrets.GH_PAT != '' && secrets.GH_PAT || github.token }}
           path: external/service-b
 
       - name: Set up QEMU
@@ -112,7 +149,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: ${{ inputs.use_gpu_base && 'Dockerfile.supervisor.from-images.gpu' || 'Dockerfile.supervisor.from-images' }}
+          file: ${{ steps.params.outputs.use_gpu_base == 'true' && 'Dockerfile.supervisor.from-images.gpu' || 'Dockerfile.supervisor.from-images' }}
           push: true
           platforms: linux/amd64
           build-args: |
@@ -147,5 +184,3 @@ jobs:
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: trivy-results.sarif
-  repository_dispatch:
-    types: [merge-two, project-updated]
