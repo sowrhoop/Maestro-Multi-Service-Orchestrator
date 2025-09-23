@@ -1,0 +1,38 @@
+node_modules
+npm-debug.log
+Dockerfile.supervisor
+.git
+.gitignore
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/*.pyd
+
+# Python virtual envs
+.venv
+venv
+
+# Node artifacts
+**/npm-debug.log*
+**/yarn-error.log*
+**/pnpm-lock.yaml
+
+# Environment and secrets
+.env
+.env.*
+**/*.env
+secrets/
+**/*.pem
+**/*.key
+**/*_rsa
+**/id_rsa*
+**/id_ed25519*
+
+# Build outputs
+dist/
+build/
+coverage/
+
+# Docker
+**/.dockerignore
+docker-compose.override.yml
