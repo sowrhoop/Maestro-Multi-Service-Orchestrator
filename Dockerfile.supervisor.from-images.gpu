@@ -1,0 +1,72 @@
+# GPU-enabled combined image starting FROM two pre-built images.
+# Base on NVIDIA CUDA runtime, install Python/Node, copy app payloads
+# from source images (expected at /app), reinstall dependencies.
+
+ARG SERVICE_A_IMAGE
+ARG SERVICE_B_IMAGE
+
+FROM ${SERVICE_A_IMAGE} AS svc_a
+FROM ${SERVICE_B_IMAGE} AS svc_b
+
+FROM nvidia/cuda:12.1.1-runtime-ubuntu22.04
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+    python3 \
+    python3-venv \
+    python3-pip \
+    nodejs \
+    npm \
+    supervisor \
+    curl \
+    ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /opt/services
+
+# Create dedicated unprivileged users for each service
+RUN useradd -r -u 10001 -m -d /home/svc_a -s /usr/sbin/nologin svc_a \
+ && useradd -r -u 10002 -m -d /home/svc_b -s /usr/sbin/nologin svc_b
+
+# Python venv
+RUN python3 -m venv /opt/venv-a
+ENV PATH=/opt/venv-a/bin:$PATH
+
+# Copy app payloads
+COPY --from=svc_a /app/ /opt/services/service-a/
+COPY --from=svc_b /app/ /opt/services/service-b/
+
+# Install dependencies
+RUN if [ -f /opt/services/service-a/requirements.txt ]; then \
+      /opt/venv-a/bin/pip install --no-cache-dir -r /opt/services/service-a/requirements.txt; \
+    fi
+RUN if [ -f /opt/services/service-b/package.json ]; then \
+      cd /opt/services/service-b && (npm ci || npm install --no-audit --no-fund); \
+    fi
+
+# Restrict code directories
+RUN chown -R svc_a:svc_a /opt/services/service-a \
+ && chown -R svc_b:svc_b /opt/services/service-b \
+ && chmod -R 750 /opt/services/service-a /opt/services/service-b
+
+# Supervisor config, healthcheck and entrypoint
+COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+COPY healthcheck.sh /healthcheck.sh
+COPY scripts/entrypoint.sh /entrypoint.sh
+RUN chmod +x /healthcheck.sh /entrypoint.sh
+
+EXPOSE 8080 9090
+
+ENV NVIDIA_VISIBLE_DEVICES=all \
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 CMD /healthcheck.sh || exit 1
+
+LABEL org.opencontainers.image.title="two-services supervisor (from images, GPU)" \
+      org.opencontainers.image.description="Supervisor image running service-a (Python) and service-b (Node.js) using app payloads copied from two pre-built images; CUDA runtime base" \
+      org.opencontainers.image.licenses="MIT"
+
+ENTRYPOINT ["/entrypoint.sh"]
+

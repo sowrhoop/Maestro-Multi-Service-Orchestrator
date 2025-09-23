@@ -1,0 +1,62 @@
+version: "3.8"
+
+services:
+  service-a:
+    image: YOUR_DOCKERHUB_USER/service-a:latest
+    environment:
+      - PORT=8080
+      - NODE_ENV=production
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/ || exit 1"]
+    # Hardened container runtime
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    ulimits:
+      nproc: 256
+      nofile:
+        soft: 1024
+        hard: 2048
+    restart: unless-stopped
+    networks:
+      - backend
+
+  service-b:
+    image: YOUR_DOCKERHUB_USER/service-b:latest
+    environment:
+      - PORT=9090
+      - NODE_ENV=production
+      - SERVICE_A_URL=http://service-a:8080
+    ports:
+      - "9090:9090"
+    depends_on:
+      service-a:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9090/ || exit 1"]
+    # Hardened container runtime
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    ulimits:
+      nproc: 256
+      nofile:
+        soft: 1024
+        hard: 2048
+    restart: unless-stopped
+    networks:
+      - backend
+
+networks:
+  backend:
+    internal: true

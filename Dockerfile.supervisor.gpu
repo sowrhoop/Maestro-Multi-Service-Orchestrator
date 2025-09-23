@@ -1,0 +1,38 @@
+FROM nvidia/cuda:12.1.1-runtime-ubuntu22.04
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+    python3 \
+    python3-pip \
+    nodejs \
+    npm \
+    supervisor \
+    git \
+    curl \
+    ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /opt/services
+
+# Monorepo copy (expects directories to exist in build context)
+COPY services/service-a/ /opt/services/service-a/
+RUN if [ -f /opt/services/service-a/requirements.txt ]; then \
+      pip3 install --no-cache-dir -r /opt/services/service-a/requirements.txt; \
+    fi
+
+COPY services/service-b/ /opt/services/service-b/
+RUN if [ -f /opt/services/service-b/package.json ]; then \
+      cd /opt/services/service-b && (npm ci || npm install --no-audit --no-fund); \
+    fi
+
+COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+
+EXPOSE 8000 3000
+
+ENV NVIDIA_VISIBLE_DEVICES=all \
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility
+
+CMD ["/usr/bin/supervisord", "-n", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
+

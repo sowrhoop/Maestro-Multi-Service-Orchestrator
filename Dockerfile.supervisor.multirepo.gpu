@@ -1,0 +1,49 @@
+FROM nvidia/cuda:12.1.1-runtime-ubuntu22.04
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+# Build args to point at your two repos and refs (branches/commits/tags)
+ARG SERVICE_A_REPO
+ARG SERVICE_A_REF=main
+ARG SERVICE_B_REPO
+ARG SERVICE_B_REF=main
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+    python3 \
+    python3-pip \
+    nodejs \
+    npm \
+    git \
+    supervisor \
+    curl \
+    ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /opt/services
+
+# Clone and install Service A (Python)
+RUN if [ -n "$SERVICE_A_REPO" ]; then \
+      git clone --depth=1 --branch "$SERVICE_A_REF" "$SERVICE_A_REPO" service-a; \
+    fi
+RUN if [ -f service-a/requirements.txt ]; then \
+      pip3 install --no-cache-dir -r service-a/requirements.txt; \
+    fi
+
+# Clone and install Service B (Node.js)
+RUN if [ -n "$SERVICE_B_REPO" ]; then \
+      git clone --depth=1 --branch "$SERVICE_B_REF" "$SERVICE_B_REPO" service-b; \
+    fi
+RUN if [ -f service-b/package.json ]; then \
+      cd service-b && (npm ci || npm install --no-audit --no-fund) && cd ..; \
+    fi
+
+COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+
+EXPOSE 8000 3000
+
+ENV NVIDIA_VISIBLE_DEVICES=all \
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility
+
+CMD ["/usr/bin/supervisord", "-n", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
+
