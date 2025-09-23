@@ -119,8 +119,8 @@ jobs:
             SERVICE_A_IMAGE=ghcr.io/${{ steps.vars.outputs.owner_lc }}/project-1:${{ steps.vars.outputs.tag_sha }}
             SERVICE_B_IMAGE=ghcr.io/${{ steps.vars.outputs.owner_lc }}/project-2:${{ steps.vars.outputs.tag_sha }}
           tags: |
-            ghcr.io/${{ steps.vars.outputs.owner_lc }}/two-services:latest
-            ghcr.io/${{ steps.vars.outputs.owner_lc }}/two-services:${{ steps.vars.outputs.tag_sha }}
+            ghcr.io/${{ steps.vars.outputs.owner_lc }}/supervisor-image-combination:latest
+            ghcr.io/${{ steps.vars.outputs.owner_lc }}/supervisor-image-combination:${{ steps.vars.outputs.tag_sha }}
 
       - name: Install Cosign
         uses: sigstore/cosign-installer@v3
@@ -128,14 +128,14 @@ jobs:
       - name: Sign merged image (keyless)
         env:
           COSIGN_EXPERIMENTAL: "1"
-          IMAGE_NAME: ghcr.io/${{ steps.vars.outputs.owner_lc }}/two-services
+          IMAGE_NAME: ghcr.io/${{ steps.vars.outputs.owner_lc }}/supervisor-image-combination
         run: |
           cosign sign --yes ${IMAGE_NAME}@${{ steps.merge.outputs.digest }}
 
       - name: Trivy scan (merged image)
         uses: aquasecurity/trivy-action@0.28.0
         with:
-          image-ref: ghcr.io/${{ steps.vars.outputs.owner_lc }}/two-services@${{ steps.merge.outputs.digest }}
+          image-ref: ghcr.io/${{ steps.vars.outputs.owner_lc }}/supervisor-image-combination@${{ steps.merge.outputs.digest }}
           format: sarif
           output: trivy-results.sarif
           vuln-type: 'os,library'
@@ -147,3 +147,5 @@ jobs:
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: trivy-results.sarif
+  repository_dispatch:
+    types: [merge-two, project-updated]
