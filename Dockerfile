@@ -121,6 +121,8 @@ RUN chown -R svc_a:svc_a /opt/services/service-a 2>/dev/null || true \
  && chmod -R 750 /opt/services/service-a /opt/services/service-b 2>/dev/null || true
 
 # Supervisor config and health/entrypoint
+COPY config/supervisord-main.conf /etc/supervisor/supervisord.conf
+RUN ln -sf /etc/supervisor/supervisord.conf /etc/supervisord.conf
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 COPY healthcheck.sh /healthcheck.sh
 COPY scripts/entrypoint.sh /entrypoint.sh
