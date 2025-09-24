@@ -1,7 +1,6 @@
-﻿# Two Services in One Image (Supervisor)
+﻿# Two Projects in One Image (Supervisor)
 
-This repository contains a single Dockerfile plus a minimal Supervisor setup to clone two external projects (project-1 and project-2), install their dependencies, and run both services inside one container.
-This repository contains a single Dockerfile plus a minimal Supervisor setup to clone two external projects (project-1 and project-2), install their dependencies, and run both services inside one container.
+Single image that runs two independent services, managed by Supervisord. At build time it can clone two external repositories and install their dependencies; at runtime it manages each service separately (start/stop/restart/status/logs) with strict user and tmp isolation.
 
 Default ports:
 - Service A: 8080
@@ -9,30 +8,33 @@ Default ports:
 
 ## Files
 - `Dockerfile`: clones both repos, installs deps, prepares runtime
-- `supervisord.conf`: starts both services under Supervisor
-- `scripts/entrypoint.sh`: validates ports and launches Supervisor
+- `config/supervisord-main.conf`: main supervisor cfg (PID + socket in `/tmp`, includes conf.d)
+- `supervisord.conf`: program definitions for `project1` and `project2`
+- `scripts/entrypoint.sh`: preps dirs/ownership, sane defaults, launches supervisor
 - `healthcheck.sh`: checks that both services respond on their ports
-- `.dockerignore`: reduces build context size
+- `.github/workflows/build.yml`: CI to build and push image to GHCR
 
 ## Build
 
-Provide your repositories and refs via build args:
+Provide your repositories and refs via build args (recommended):
 
 ```sh
 docker build -t two-services . \
-  --build-arg SERVICE_A_REPO=https://github.com/<owner>/project-1 \
+  --build-arg SERVICE_A_REPO=https://github.com/<owner>/project-1.git \
   --build-arg SERVICE_A_REF=main \
-  --build-arg SERVICE_B_REPO=https://github.com/<owner>/project-2 \
+  --build-arg SERVICE_B_REPO=https://github.com/<owner>/project-2.git \
   --build-arg SERVICE_B_REF=main
 ```
 
 Optional build args:
-- `SERVICE_A_SUBDIR` / `SERVICE_B_SUBDIR`: use if the app lives in a subdirectory
-- `SERVICE_A_INSTALL_CMD` / `SERVICE_B_INSTALL_CMD`: custom install commands to mirror each repo's Dockerfile
+- `SERVICE_A_SUBDIR`, `SERVICE_B_SUBDIR`: app lives in a subdirectory
+- `SERVICE_A_INSTALL_CMD`, `SERVICE_B_INSTALL_CMD`: custom install steps to mirror each repo’s Dockerfile
 
 Dependency install autodetect:
-- Service A (Python): `requirements.txt` -> `pip install -r`, or `pyproject.toml`/`setup.py` -> `pip install .`
+- Service A (Python): `requirements.txt` → `pip install -r`, or `pyproject.toml`/`setup.py` → `pip install .`
 - Service B (Node): prefers `pnpm-lock.yaml`, then `yarn.lock`, then `npm` (`npm ci` fallback to `npm install`)
+
+Tip: If you don’t pass repos at build time, the container still boots and serves static directories by default.
 
 ## Run
 
@@ -59,8 +61,8 @@ docker exec -it two-services supervisorctl tail -f project2
 
 - Ports: `SERVICE_A_PORT` (default 8080), `SERVICE_B_PORT` (default 9090). Must differ.
 - Commands (see `supervisord.conf`):
-  - `SERVICE_A_CMD` (default assumes FastAPI: `uvicorn app:app --host 0.0.0.0 --port ${SERVICE_A_PORT}`)
-  - `SERVICE_B_CMD` (default assumes Node: `PORT=${SERVICE_B_PORT} node server.js`)
+  - `SERVICE_A_CMD` (default: `python3 -m http.server ${SERVICE_A_PORT} --directory /opt/services/service-a --bind 0.0.0.0` if no Python app detected; otherwise assumes FastAPI `uvicorn app:app`)
+  - `SERVICE_B_CMD` (default: `python3 -m http.server ${SERVICE_B_PORT} --directory /opt/services/service-b --bind 0.0.0.0` if no Node app detected; otherwise `PORT=${SERVICE_B_PORT} node server.js`)
 
 Example with custom A command:
 
@@ -90,3 +92,50 @@ Notes:
 - If `noexec` on `/tmp` causes issues for your runtime, drop `noexec` from that mount.
 - Supervisor starts both services as unprivileged users (`svc_a`, `svc_b`) and logs to stdout/stderr.
 - Healthcheck pings both ports via `healthcheck.sh`. Adjust paths if your services differ.
+
+## GitHub Actions (GHCR)
+
+This repo includes a workflow to build and push the image to GHCR. It supports manual dispatch inputs for both repos and refs; on tags (`vX.Y.Z`) it also tags the image with `X.Y.Z` and `X.Y` and creates a GitHub Release.
+
+Steps:
+- Add `GHCR_PAT` secret (write:packages) or rely on `GITHUB_TOKEN`.
+- Run “Build and Push Image” workflow and provide:
+  - `service_a_repo`, `service_a_ref` (e.g., https://github.com/<owner>/project-1.git, main)
+  - `service_b_repo`, `service_b_ref` (e.g., https://github.com/<owner>/project-2.git, main)
+
+Pull and run:
+```sh
+docker pull ghcr.io/<owner>/supervisor-image-combination:latest
+docker run -d --name two -p 8080:8080 -p 9090:9090 ghcr.io/<owner>/supervisor-image-combination:latest
+```
+
+## Supervisor Details
+
+- Socket: `unix:///tmp/supervisor.sock`
+- PID file: `/tmp/supervisord.pid`
+- Configs: main at `/etc/supervisor/supervisord.conf`; includes `/etc/supervisor/conf.d/*.conf`
+- Control inside the container:
+  - `supervisorctl status | start project1 | stop project2 | restart project1`
+
+## Mounting Local Content (no rebuild)
+
+You can mount content into service directories; default static servers will serve it:
+
+```sh
+docker run -d --name two \
+  -v $(pwd)/site-a:/opt/services/service-a \
+  -v $(pwd)/site-b:/opt/services/service-b \
+  -p 8080:8080 -p 9090:9090 two-services
+```
+
+## Troubleshooting
+
+- Port is already allocated: pick free host ports (e.g., `-p 18080:8080 -p 19090:9090`) or stop the conflicting listener.
+- supervisorctl “no such file”: ensure the container is running; the socket path is `/tmp/supervisor.sock` (created by supervisord). Inside: `ls -l /tmp/supervisor.sock`.
+- Services crash on chdir with EACCES: the entrypoint ensures ownership/permissions; if you mount volumes, make sure they are readable by `svc_a`/`svc_b`.
+
+## Security Notes
+
+- Each service runs as its own user with 750 perms on its code tree and isolated tmp/cache directories.
+- The container defaults are compatible with read-only rootfs; use `--tmpfs` mounts for writable paths.
+- Consider network policies (firewall) to only expose required ports.
