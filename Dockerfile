@@ -18,19 +18,19 @@ ARG SERVICE_B_INSTALL_CMD=
 
 # Runtime ports (can be overridden at run time)
 ENV SERVICE_A_PORT=8080 \
-    SERVICE_B_PORT=9090
+    SERVICE_B_PORT=9090 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1
 
-# Base system deps + Node 20.x (via NodeSource) + Python + Supervisor
+# Base system deps + Python + Node (Debian packages) + Supervisor
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-    curl ca-certificates gnupg wget \
+    curl ca-certificates \
     python3 python3-pip python3-venv \
+    nodejs npm \
     git supervisor \
- && mkdir -p /etc/apt/keyrings \
- && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg \
- && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" > /etc/apt/sources.list.d/nodesource.list \
- && apt-get update \
- && apt-get install -y --no-install-recommends nodejs \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /opt/services
@@ -55,6 +55,9 @@ RUN if [ -n "$SERVICE_A_SUBDIR" ] && [ -d "service-a/$SERVICE_A_SUBDIR" ]; then 
     else \
       mv service-a "$SA_DIR" 2>/dev/null || true; \
     fi
+
+# Strip VCS metadata from Service A
+RUN if [ -d "$SA_DIR/.git" ]; then rm -rf "$SA_DIR/.git"; fi
 
 # Install dependencies for Service A
 RUN set -eux; \
@@ -86,6 +89,9 @@ RUN if [ -n "$SERVICE_B_SUBDIR" ] && [ -d "service-b/$SERVICE_B_SUBDIR" ]; then 
       mv service-b "$SB_DIR" 2>/dev/null || true; \
     fi
 
+# Strip VCS metadata from Service B
+RUN if [ -d "$SB_DIR/.git" ]; then rm -rf "$SB_DIR/.git"; fi
+
 # Install dependencies for Service B (Node: pnpm/yarn/npm autodetect)
 ENV NODE_ENV=production
 RUN set -eux; \
@@ -94,16 +100,19 @@ RUN set -eux; \
       if [ -n "$SERVICE_B_INSTALL_CMD" ]; then \
         /bin/sh -lc "$SERVICE_B_INSTALL_CMD"; \
       elif [ -f pnpm-lock.yaml ]; then \
-        corepack enable && corepack prepare pnpm@latest --activate && pnpm install --frozen-lockfile; \
+        (corepack enable || true) && (corepack prepare pnpm@latest --activate || npm i -g pnpm) \
+          && pnpm install --frozen-lockfile --prod; \
       elif [ -f yarn.lock ]; then \
-        corepack enable && corepack prepare yarn@stable --activate && yarn install --frozen-lockfile --production; \
+        (corepack enable || true) && (corepack prepare yarn@stable --activate || npm i -g yarn) \
+          && yarn install --frozen-lockfile --production; \
       elif [ -f package-lock.json ]; then \
-        npm ci || npm install --no-audit --no-fund; \
+        npm ci --omit=dev || npm install --omit=dev --no-audit --no-fund; \
       elif [ -f package.json ]; then \
-        npm install --no-audit --no-fund; \
+        npm install --omit=dev --no-audit --no-fund; \
       else \
         echo "[INFO] Service B: no Node manifest found; skipping install"; \
       fi; \
+      npm cache clean --force || true; \
     fi
 
 # Restrict code directories
