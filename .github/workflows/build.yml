@@ -3,6 +3,8 @@ name: Build and Push Image
 on:
   push:
     branches: [ main ]
+    tags:
+      - 'v*.*.*'
   workflow_dispatch:
     inputs:
       service_a_repo:
@@ -63,6 +65,13 @@ jobs:
         run: |
           echo "owner_lc=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
           echo "sha_tag=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+          REF_NAME="${GITHUB_REF_NAME}"
+          if [[ "${GITHUB_REF_TYPE}" == "tag" && "${REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            VERSION="${REF_NAME#v}"
+            MAJOR_MINOR=$(echo "$VERSION" | cut -d. -f1-2)
+            echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+            echo "version_mm=${MAJOR_MINOR}" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Build and push
         uses: docker/build-push-action@v6
@@ -74,6 +83,8 @@ jobs:
           tags: |
             ghcr.io/${{ steps.vars.outputs.owner_lc }}/${{ env.IMAGE_NAME }}:latest
             ghcr.io/${{ steps.vars.outputs.owner_lc }}/${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.sha_tag }}
+            ${{ steps.vars.outputs.version != '' && format('ghcr.io/{0}/{1}:{2}', steps.vars.outputs.owner_lc, env.IMAGE_NAME, steps.vars.outputs.version) || '' }}
+            ${{ steps.vars.outputs.version_mm != '' && format('ghcr.io/{0}/{1}:{2}', steps.vars.outputs.owner_lc, env.IMAGE_NAME, steps.vars.outputs.version_mm) || '' }}
           build-args: |
             SERVICE_A_REPO=${{ inputs.service_a_repo }}
             SERVICE_A_REF=${{ inputs.service_a_ref }}
@@ -84,3 +95,10 @@ jobs:
             SERVICE_B_SUBDIR=${{ inputs.service_b_subdir }}
             SERVICE_B_INSTALL_CMD=${{ inputs.service_b_install_cmd }}
 
+      - name: Create GitHub Release (on tag)
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          generate_release_notes: true

@@ -11,7 +11,7 @@ SERVICE_B_REF?=main
 SERVICE_B_SUBDIR?=
 SERVICE_B_INSTALL_CMD?=
 
-.PHONY: build push run shell clean
+.PHONY: build push run shell clean tag release
 
 build:
 	docker build -t $(IMAGE) \
@@ -46,3 +46,12 @@ shell:
 clean:
 	-docker rm -f $(IMAGE) 2>/dev/null || true
 	-docker rmi $(IMAGE) 2>/dev/null || true
+
+# Tag and push a git tag to trigger the workflow
+VERSION?=
+tag:
+	@if [ -z "$(VERSION)" ]; then echo "Usage: make tag VERSION=1.2.3"; exit 1; fi
+	git tag -a v$(VERSION) -m "Release v$(VERSION)"
+	git push origin v$(VERSION)
+
+release: build tag

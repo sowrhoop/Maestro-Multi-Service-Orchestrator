@@ -1,5 +1,6 @@
 #!/usr/bin/env sh
-set -euo pipefail
+# Use POSIX sh flags only (dash busybox compatible)
+set -eu
 
 umask 0027
 
