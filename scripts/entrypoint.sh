@@ -34,4 +34,5 @@ if [ -z "${SERVICE_B_CMD:-}" ]; then
 fi
 
 echo "Starting services: project1 on ${A_PORT}, project2 on ${B_PORT}"
-exec /usr/bin/supervisord -n -c /etc/supervisor/conf.d/supervisord.conf
+# Use default config at /etc/supervisor/supervisord.conf which includes conf.d/
+exec /usr/bin/supervisord -n
