@@ -2,7 +2,7 @@ IMAGE?=two-services
 PLATFORMS?=linux/amd64
 
 # Build arg defaults (override on make command line)
-SERVICE_A_REPO?=https://github.com/sowrhoop/project-1.git
+SERVICE_A_REPO?=https://github.com/sowrhoop/sowrhoop.github.io.git
 SERVICE_A_REF?=main
 SERVICE_A_SUBDIR?=
 SERVICE_A_INSTALL_CMD?=
