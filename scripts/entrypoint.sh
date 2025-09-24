@@ -8,6 +8,9 @@ umask 0027
 mkdir -p /tmp/project1-tmp /tmp/project1-cache /tmp/project2-tmp /tmp/project2-cache || true
 mkdir -p /home/svc_a /home/svc_b || true
 mkdir -p /opt/services/service-a /opt/services/service-b || true
+chown -R svc_a:svc_a /opt/services/service-a || true
+chown -R svc_b:svc_b /opt/services/service-b || true
+chmod 750 /opt/services/service-a /opt/services/service-b || true
 chown -R svc_a:svc_a /home/svc_a /tmp/project1-tmp /tmp/project1-cache || true
 chown -R svc_b:svc_b /home/svc_b /tmp/project2-tmp /tmp/project2-cache || true
 chmod 700 /home/svc_a /home/svc_b || true
