@@ -6,6 +6,7 @@ umask 0027
 
 # Ensure writable runtime dirs exist (works with --read-only + tmpfs mounts)
 mkdir -p /tmp/project1-tmp /tmp/project1-cache /tmp/project2-tmp /tmp/project2-cache || true
+mkdir -p /tmp/supervisor || true
 mkdir -p /home/svc_a /home/svc_b || true
 mkdir -p /opt/services/service-a /opt/services/service-b || true
 chown -R svc_a:svc_a /opt/services/service-a || true
