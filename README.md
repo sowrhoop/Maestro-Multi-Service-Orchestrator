@@ -1,6 +1,7 @@
 ﻿# Two Services in One Image (Supervisor)
 
 This repository contains a single Dockerfile plus a minimal Supervisor setup to clone two external projects (project-1 and project-2), install their dependencies, and run both services inside one container.
+This repository contains a single Dockerfile plus a minimal Supervisor setup to clone two external projects (project-1 and project-2), install their dependencies, and run both services inside one container.
 
 Default ports:
 - Service A: 8080
