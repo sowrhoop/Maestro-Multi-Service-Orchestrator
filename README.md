@@ -179,6 +179,37 @@ What it does per service:
 
 You can then manage them independently with `supervisorctl` (status/start/stop/restart/tail).
 
+## Non‑Interactive Provisioning (ENV)
+
+Provision many services at boot or later without prompts. Two formats are supported:
+
+1) Compact `SERVICES` list (semicolon separates services; `|` separates fields):
+
+```sh
+# repo|port|ref|name|user|cmd (ref/name/user/cmd are optional)
+docker run -d --name two \
+  -e SERVICES='https://github.com/<owner>/project-1.git|8080|main|alpha|svc_alpha|;https://github.com/<owner>/project-2.git|9090|main|beta|svc_beta|' \
+  -p 8080:8080 -p 9090:9090 \
+  ghcr.io/<owner>/supervisor-image-combination:latest
+```
+
+2) Indexed variables (`SERVICES_COUNT` + `SVC_<i>_*`):
+
+```sh
+docker run -d --name two \
+  -e SERVICES_COUNT=2 \
+  -e SVC_1_REPO=https://github.com/<owner>/project-1.git -e SVC_1_PORT=8080 -e SVC_1_REF=main -e SVC_1_NAME=alpha -e SVC_1_USER=svc_alpha \
+  -e SVC_2_REPO=https://github.com/<owner>/project-2.git -e SVC_2_PORT=9090 -e SVC_2_REF=main -e SVC_2_NAME=beta -e SVC_2_USER=svc_beta \
+  -p 8080:8080 -p 9090:9090 \
+  ghcr.io/<owner>/supervisor-image-combination:latest
+```
+
+At boot the entrypoint pre‑provisions services (fetches sources, installs deps, writes program configs), then Supervisor starts and adopts them. You can also apply the spec later to a running container:
+
+```sh
+docker exec -it two deploy-from-env
+```
+
 ### Default CI behavior
 
 - On push to `main`, the GitHub Actions workflow builds the image with defaults:

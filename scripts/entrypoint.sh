@@ -74,6 +74,13 @@ if [ -z "${SERVICE_B_CMD:-}" ]; then
   export SERVICE_B_CMD="python3 -m http.server ${B_PORT} --directory /opt/services/service-b --bind 0.0.0.0"
 fi
 
+# If SERVICES* env is present, pre-provision before Supervisor starts
+if [ -n "${SERVICES:-}" ] || [ -n "${SERVICES_COUNT:-}" ]; then
+  if [ -x /usr/local/bin/deploy-from-env ]; then
+    /usr/local/bin/deploy-from-env --prepare-only || true
+  fi
+fi
+
 echo "Starting services: project1 on ${A_PORT}, project2 on ${B_PORT}"
 # Use default config at /etc/supervisor/supervisord.conf which includes conf.d/
 exec /usr/bin/supervisord -n

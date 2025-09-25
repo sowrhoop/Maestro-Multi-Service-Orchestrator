@@ -127,8 +127,11 @@ COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 COPY healthcheck.sh /healthcheck.sh
 COPY scripts/entrypoint.sh /entrypoint.sh
 COPY scripts/deploy-interactive.sh /usr/local/bin/deploy
+COPY scripts/deploy-from-env.sh /usr/local/bin/deploy-from-env
+COPY scripts/lib-deploy.sh /usr/local/lib/deploy/lib-deploy.sh
 RUN chmod +x /healthcheck.sh /entrypoint.sh \
- && chmod +x /usr/local/bin/deploy \
+ && chmod +x /usr/local/bin/deploy /usr/local/bin/deploy-from-env \
+ && chmod 755 /usr/local/lib/deploy/lib-deploy.sh \
  && apt-get purge -y git \
  && apt-get autoremove -y \
  && rm -rf /var/lib/apt/lists/*
