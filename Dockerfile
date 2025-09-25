@@ -126,7 +126,9 @@ RUN ln -sf /etc/supervisor/supervisord.conf /etc/supervisord.conf
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 COPY healthcheck.sh /healthcheck.sh
 COPY scripts/entrypoint.sh /entrypoint.sh
+COPY scripts/deploy-interactive.sh /usr/local/bin/deploy
 RUN chmod +x /healthcheck.sh /entrypoint.sh \
+ && chmod +x /usr/local/bin/deploy \
  && apt-get purge -y git \
  && apt-get autoremove -y \
  && rm -rf /var/lib/apt/lists/*

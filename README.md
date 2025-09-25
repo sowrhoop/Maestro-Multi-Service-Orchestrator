@@ -155,6 +155,30 @@ docker run -d --name two \
 - The container defaults are compatible with read-only rootfs; use `--tmpfs` mounts for writable paths.
 - Consider network policies (firewall) to only expose required ports.
 
+## Interactive Multi‑Project Deployer
+
+Run inside a started container to deploy N services dynamically:
+
+```sh
+docker exec -it <container_name> deploy
+```
+
+It will prompt for:
+- how many projects to deploy (1–20)
+- each project’s GitHub URL and ref (branch/tag/sha)
+- a service name (used for UNIX user and Supervisor program)
+- a port for that service
+- an optional custom start command (defaults are auto‑detected)
+
+What it does per service:
+- Creates a dedicated UNIX user (`svc_<name>`) and private home
+- Downloads the repo via GitHub tarball (no git necessary)
+- Installs dependencies when `requirements.txt`/`pyproject.toml` or `package.json` exist
+- Confines temp/cache to `/tmp/<name>-tmp` and `/tmp/<name>-cache`
+- Writes `/etc/supervisor/conf.d/program-<name>.conf` and reloads Supervisor
+
+You can then manage them independently with `supervisorctl` (status/start/stop/restart/tail).
+
 ### Default CI behavior
 
 - On push to `main`, the GitHub Actions workflow builds the image with defaults:
