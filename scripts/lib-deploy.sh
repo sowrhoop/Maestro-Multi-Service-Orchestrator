@@ -43,7 +43,36 @@ ensure_user() {
 detect_default_cmd() {
   d="$1"; port="$2"
   if [ -f "$d/package.json" ]; then
-    printf "PORT=%s node server.js" "$port"
+    if [ -f "$d/server.js" ]; then
+      script="server.js"
+    elif [ -f "$d/index.js" ]; then
+      script="index.js"
+    else
+      script=""
+    fi
+
+    if [ -n "$script" ]; then
+      printf "PORT=%s node %s" "$port" "$script"
+    else
+      start_cmd=$(python3 - <<'PY' "$d")
+import json, os, sys
+path = os.path.join(sys.argv[1], "package.json")
+try:
+    with open(path, "r", encoding="utf-8") as fh:
+        data = json.load(fh)
+except Exception:
+    print("")
+    sys.exit(0)
+scripts = data.get("scripts") or {}
+print((scripts.get("start") or "").strip())
+PY
+      start_cmd=$(printf "%s" "$start_cmd" | tr -d '\r\n')
+      if [ -n "$start_cmd" ]; then
+        printf "PORT=%s npm start" "$port"
+      else
+        printf "python3 -m http.server %s --directory %s --bind 0.0.0.0" "$port" "$d"
+      fi
+    fi
   elif [ -f "$d/requirements.txt" ] || [ -f "$d/pyproject.toml" ]; then
     if [ -f "$d/app.py" ]; then
       printf "uvicorn app:app --host 0.0.0.0 --port %s" "$port"
@@ -94,4 +123,3 @@ stdout_logfile_maxbytes=0
 stderr_logfile_maxbytes=0
 EOF
 }
-
