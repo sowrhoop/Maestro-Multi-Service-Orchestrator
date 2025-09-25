@@ -6,7 +6,7 @@
 ARG BUILDPLATFORM
 ARG TARGETPLATFORM=linux/amd64
 
-FROM --platform=$TARGETPLATFORM debian:bookworm-slim@sha256:6ea5bb7a8a798edc2cc74fd07c2c8ed5fcd425f4b125243ff54f89488f8f17d4 AS base
+FROM --platform=$TARGETPLATFORM debian:bookworm-slim AS base
 
 ARG DEBIAN_FRONTEND=noninteractive
 
