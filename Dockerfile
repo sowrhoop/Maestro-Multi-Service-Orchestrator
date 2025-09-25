@@ -4,7 +4,7 @@
 # two primary repos at build-time and bootstrapping additional
 # services at runtime under supervisord.
 ARG BUILDPLATFORM
-ARG TARGETPLATFORM
+ARG TARGETPLATFORM=linux/amd64
 
 FROM --platform=$TARGETPLATFORM debian:bookworm-slim@sha256:6ea5bb7a8a798edc2cc74fd07c2c8ed5fcd425f4b125243ff54f89488f8f17d4 AS base
 
