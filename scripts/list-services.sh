@@ -2,31 +2,58 @@
 set -eu
 
 FORMAT="table"
-if [ "${1:-}" = "--json" ]; then FORMAT="json"; fi
-
-collect() {
-  for f in /etc/supervisor/conf.d/program-*.conf; do
-    [ -f "$f" ] || continue
-    name=$(sed -n 's/^\[program:\(.*\)\]/\1/p' "$f" | head -n1 || basename "$f" | sed 's/^program-//; s/\.conf$//')
-    user=$(sed -n 's/^user=//p' "$f" | head -n1)
-    dir=$(sed -n 's/^directory=//p' "$f" | head -n1)
-    cmd=$(sed -n 's/^command=\/bin\/sh -c \"\(.*\)\"/\1/p' "$f" | head -n1)
-    status=$(supervisorctl status "$name" 2>/dev/null | awk '{print $2" "$3}' | sed 's/\[//; s/\]//' || true)
-    printf "%s\t%s\t%s\t%s\t%s\n" "$name" "$user" "$dir" "$status" "$cmd"
-  done
-}
-
-if [ "$FORMAT" = "json" ]; then
-  collect | python3 - <<'PY'
-import sys, json
-items=[]
-for line in sys.stdin:
-    name,user,dir,status,cmd = line.rstrip('\n').split('\t',4)
-    items.append(dict(name=name,user=user,directory=dir,status=status,command=cmd))
-print(json.dumps(items))
-PY
-else
-  printf "%-20s %-16s %-28s %-12s %s\n" NAME USER DIRECTORY STATUS COMMAND
-  collect | awk -F '\t' '{printf "%-20s %-16s %-28s %-12s %s\n", $1, $2, $3, $4, $5}'
+if [ "${1:-}" = "--json" ]; then
+  FORMAT="json"
 fi
 
+python3 - "$FORMAT" <<'PY'
+import sys, glob, configparser, shlex, subprocess, json
+
+fmt = sys.argv[1]
+files = sorted(glob.glob('/etc/supervisor/conf.d/program-*.conf'))
+status_map = {}
+try:
+    proc = subprocess.run(['supervisorctl', 'status'], check=False, capture_output=True, text=True)
+    for line in proc.stdout.splitlines():
+        parts = line.split()
+        if not parts:
+            continue
+        name = parts[0]
+        status = ' '.join(parts[1:3]).strip('[]') if len(parts) > 1 else ''
+        status_map[name] = status
+except Exception:
+    pass
+
+items = []
+for path in files:
+    parser = configparser.RawConfigParser()
+    parser.optionxform = str
+    try:
+        parser.read(path)
+    except Exception:
+        continue
+    for section in parser.sections():
+        command_raw = parser.get(section, 'command', fallback='')
+        try:
+            tokens = shlex.split(command_raw)
+        except ValueError:
+            tokens = []
+        actual_cmd = tokens[2] if len(tokens) >= 3 and tokens[0] == '/bin/sh' and tokens[1] == '-c' else command_raw
+        items.append({
+            'name': section,
+            'user': parser.get(section, 'user', fallback=''),
+            'directory': parser.get(section, 'directory', fallback=''),
+            'status': status_map.get(section, ''),
+            'command': actual_cmd,
+        })
+
+if fmt == 'json':
+    print(json.dumps(items))
+else:
+    print(f"{'NAME':<20} {'USER':<16} {'DIRECTORY':<32} {'STATUS':<12} COMMAND")
+    for item in items:
+        directory = item['directory']
+        if len(directory) > 32:
+            directory = directory[:29] + '...'
+        print(f"{item['name']:<20} {item['user']:<16} {directory:<32} {item['status']:<12} {item['command']}")
+PY

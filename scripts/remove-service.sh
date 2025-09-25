@@ -44,9 +44,36 @@ USER_FROM_CONF=""
 DIR_FROM_CONF=""
 CMD_FROM_CONF=""
 if [ -f "$CONF" ]; then
-  USER_FROM_CONF=$(sed -n 's/^user=//p' "$CONF" | head -n1 || true)
-  DIR_FROM_CONF=$(sed -n 's/^directory=//p' "$CONF" | head -n1 || true)
-  CMD_FROM_CONF=$(sed -n 's/^command=\/bin\/sh -c \"//p' "$CONF" | head -n1 | sed 's/\"$//' || true)
+  IFS='|' read -r USER_FROM_CONF DIR_FROM_CONF CMD_FROM_CONF <<EOF
+$(python3 - "$CONF" <<'PY'
+import sys, configparser, shlex
+path = sys.argv[1]
+parser = configparser.RawConfigParser()
+parser.optionxform = str
+try:
+    parser.read(path)
+except Exception:
+    parser = None
+
+user = directory = command = ''
+if parser and parser.sections():
+    section = parser.sections()[0]
+    user = parser.get(section, 'user', fallback='')
+    directory = parser.get(section, 'directory', fallback='')
+    command_raw = parser.get(section, 'command', fallback='')
+    try:
+        tokens = shlex.split(command_raw)
+    except ValueError:
+        tokens = []
+    if len(tokens) >= 3 and tokens[0] == '/bin/sh' and tokens[1] == '-c':
+        command = tokens[2]
+    else:
+        command = command_raw
+print(f"{user}|{directory}|{command}")
+PY
+)
+EOF
+  IFS=$(printf ' \t\n')
 fi
 
 run() { [ $DRY -eq 1 ] && echo "+ $*" || sh -c "$*"; }
@@ -81,4 +108,3 @@ if [ $DELUSER -eq 1 ]; then
 fi
 
 echo "Done. Current programs:" && supervisorctl status || true
-

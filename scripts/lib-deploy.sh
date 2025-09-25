@@ -25,11 +25,30 @@ codeload_url() {
 
 fetch_tar_into_dir() {
   url="$1"; dest="$2"
-  tmp="/tmp/src.$(date +%s).tar.gz"
-  curl -fsSL "$url" -o "$tmp"
+  [ -n "$url" ] || { echo "fetch_tar_into_dir: url missing" >&2; return 1; }
+  [ -n "$dest" ] || { echo "fetch_tar_into_dir: dest missing" >&2; return 1; }
+
+  tmp="$(mktemp -t fetch.XXXXXX.tar.gz)" || return 1
+  if ! curl -fsSL "$url" -o "$tmp"; then
+    echo "Failed to download: $url" >&2
+    rm -f "$tmp"
+    return 1
+  fi
+
   mkdir -p "$dest"
-  tar -xzf "$tmp" -C "$dest" --strip-components 1 2>/dev/null || tar -xzf "$tmp" -C "$dest" 2>/dev/null || true
+  # Prefer stripping the leading directory when archives contain a root folder.
+  if tar -xzf "$tmp" -C "$dest" --strip-components 1 2>/dev/null; then
+    :
+  elif tar -xzf "$tmp" -C "$dest" 2>/dev/null; then
+    :
+  else
+    echo "Failed to extract archive from $url" >&2
+    rm -f "$tmp"
+    return 1
+  fi
+
   rm -f "$tmp"
+  return 0
 }
 
 ensure_user() {
@@ -102,10 +121,15 @@ write_program_conf() {
   tmpd="/tmp/${name}-tmp"; cache="/tmp/${name}-cache"
   mkdir -p "$tmpd" "$cache"
   chown -R "$user":"$user" "$tmpd" "$cache" "$dir" || true
+  quoted_cmd=$(python3 -c 'import shlex,sys; print(shlex.quote(sys.argv[1]))' "$cmd")
+  if [ -z "$quoted_cmd" ]; then
+    echo "write_program_conf: failed to quote command for $name" >&2
+    return 1
+  fi
   cat >"/etc/supervisor/conf.d/program-${name}.conf" <<EOF
 [program:${name}]
 directory=${dir}
-command=/bin/sh -c "${cmd}"
+command=/bin/sh -c ${quoted_cmd}
 user=${user}
 environment=HOME="/home/${user}",TMPDIR="${tmpd}",XDG_CACHE_HOME="${cache}"
 umask=0027

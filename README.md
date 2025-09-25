@@ -1,98 +1,113 @@
-﻿# Two Projects in One Image (Supervisor)
+# Maestro Multi-Service Orchestrator
 
-Single image that runs two independent services, managed by Supervisord. At build time it can clone two external repositories and install their dependencies; at runtime it manages each service separately (start/stop/restart/status/logs) with strict user and tmp isolation.
+Maestro is a production-grade container blueprint for running two or more applications under Supervisord with strict process and filesystem isolation. It replaces the old "Supervisor-Image-Combination" name and puts a polished brand on the same battle-tested runtime so you can ship polyglot services from a single image without cutting corners on security or operability.
 
-Default ports:
-- Service A: 8080
-- Service B: 9090
+## Core Capabilities
+- Clone and install two primary projects at build time with optional subdirectory and custom install hooks.
+- Auto-bootstrap the legacy A/B service slots only when code or explicit commands are provided (configurable via `DEFAULT_SERVICES_MODE`).
+- Provision any number of additional services at runtime using interactive or environment-driven workflows; each service receives its own UNIX user, temp/cache directories, and Supervisor program.
+- Hardened entrypoint that validates ports, ensures ownership/permissions, and generates Supervisor configs on the fly.
+- Healthcheck script that adapts to the services you enable and falls back to verifying the Supervisor control socket.
 
-## Files
-- `Dockerfile`: clones both repos, installs deps, prepares runtime
-- `config/supervisord-main.conf`: main supervisor cfg (PID + socket in `/tmp`, includes conf.d)
-- `supervisord.conf`: program definitions for `project1` and `project2`
-- `scripts/entrypoint.sh`: preps dirs/ownership, sane defaults, launches supervisor
-- `healthcheck.sh`: checks that both services respond on their ports
-- `.github/workflows/build.yml`: CI to build and push image to GHCR
+## Layout
+- `Dockerfile`: clones repositories, installs dependencies, and lays down runtime assets.
+- `config/supervisord-main.conf`: Supervisor root configuration (PID and socket in `/tmp`, includes `conf.d`).
+- `scripts/entrypoint.sh`: prepares isolation, writes Supervisor program files, honours default-service policy, and launches Supervisor foreground.
+- `scripts/lib-deploy.sh`: shared helpers for fetching tarballs, detecting default commands, and writing program stanzas.
+- `scripts/deploy-interactive.sh`: prompts inside the container to add services dynamically.
+- `scripts/deploy-from-env.sh`: idempotent provisioning from environment variables (`SERVICES` or indexed `SVC_*`).
+- `scripts/list-services.sh`: single command inventory in table or JSON form.
+- `scripts/remove-service.sh`: removes services cleanly with optional purge/user deletion modes.
+- `healthcheck.sh`: probes configured ports (`HEALTHCHECK_PORTS` override) or falls back to Supervisor status.
+- `.github/workflows/build.yml`: GitHub Actions workflow for building and pushing the image to GHCR.
 
-## Build
+## Quickstart
 
-Provide your repositories and refs via build args (recommended):
-
+### Build
 ```sh
-docker build -t two-services . \
-  --build-arg SERVICE_A_REPO=https://github.com/<owner>/project-1.git \
+docker build -t maestro-orchestrator . \
+  --build-arg SERVICE_A_REPO=https://github.com/<owner>/service-a.git \
   --build-arg SERVICE_A_REF=main \
-  --build-arg SERVICE_B_REPO=https://github.com/<owner>/project-2.git \
+  --build-arg SERVICE_B_REPO=https://github.com/<owner>/service-b.git \
   --build-arg SERVICE_B_REF=main
 ```
 
-Optional build args:
-- `SERVICE_A_SUBDIR`, `SERVICE_B_SUBDIR`: app lives in a subdirectory
-- `SERVICE_A_INSTALL_CMD`, `SERVICE_B_INSTALL_CMD`: custom install steps to mirror each repo’s Dockerfile
+Optional build arguments:
+- `SERVICE_A_SUBDIR`, `SERVICE_B_SUBDIR`: if the runnable project lives below the repo root.
+- `SERVICE_A_INSTALL_CMD`, `SERVICE_B_INSTALL_CMD`: custom install steps (useful to mirror each project’s Dockerfile).
 
-Dependency install autodetect:
-- Service A (Python): `requirements.txt` → `pip install -r`, or `pyproject.toml`/`setup.py` → `pip install .`
-- Service B (Node): prefers `pnpm-lock.yaml`, then `yarn.lock`, then `npm` (`npm ci` fallback to `npm install`)
+Dependency autodetect:
+- Python (`requirements.txt` → `pip install -r`; otherwise `pyproject.toml` / `setup.py` → `pip install .`).
+- Node.js (prefers `pnpm-lock.yaml`, then `yarn.lock`, then `npm ci`, falling back to `npm install`).
 
-Tip: If you don’t pass repos at build time, the container still boots and serves static directories by default.
-
-Runtime fetch (no rebuild):
-- You can ask the container to fetch source at start using tarballs:
-
+### Run the defaults
 ```sh
-docker run -d --name two \
-  -e SERVICE_A_REPO=https://github.com/<owner>/project-1.git \
+docker run -d --name maestro \
+  -p 8080:8080 -p 9090:9090 \
+  maestro-orchestrator
+```
+
+Supervisor program names remain `project1` and `project2` for compatibility:
+```sh
+docker exec -it maestro supervisorctl status
+docker exec -it maestro supervisorctl restart project1
+docker exec -it maestro supervisorctl tail -f project2
+```
+
+### Runtime source fetch (no rebuild)
+If build arguments were omitted, populate directories on container start:
+```sh
+docker run -d --name maestro \
+  -e SERVICE_A_REPO=https://github.com/<owner>/service-a.git \
   -e SERVICE_A_REF=main \
-  -e SERVICE_B_REPO=https://github.com/<owner>/project-2.git \
+  -e SERVICE_B_REPO=https://github.com/<owner>/service-b.git \
   -e SERVICE_B_REF=main \
   -p 8080:8080 -p 9090:9090 \
-  ghcr.io/<owner>/supervisor-image-combination:latest
+  maestro-orchestrator
+```
+The entrypoint downloads tarballs via `codeload.github.com` when `/opt/services/service-{a,b}` are empty.
+
+## Configuration Reference
+
+### Default Service Slots
+- `DEFAULT_SERVICES_MODE` (`auto` | `always` | `never`): governs whether the built-in slots start automatically. `auto` (default) starts when code/commands are present. `always` restores the old "serve static" behaviour; `never` suppresses them entirely.
+- `SERVICE_A_ENABLED`, `SERVICE_B_ENABLED`: explicit `true/false` overrides for each slot.
+- `SERVICE_A_PORT`, `SERVICE_B_PORT`: default 8080/9090; must differ. Ports are validated at runtime.
+- `SERVICE_A_CMD`, `SERVICE_B_CMD`: override launch command. If unset Maestro inspects the directory (Python manifests → `uvicorn app:app`; Node projects → `node server.js` or `npm start`; fallback static server).
+- `SERVICE_A_TARBALL`, `SERVICE_B_TARBALL`: provide a direct tarball URL instead of a Git repo.
+
+### Health & Observability
+- `HEALTHCHECK_PORTS`: space/comma separated list (`8080 9090`). When unset, only enabled default slots are probed; if none exist, `supervisorctl status` is used.
+- `list-services [--json]`: prints every Supervisor program with user, directory, status and command.
+- Logs stream to stdout/stderr; use `docker logs` or `supervisorctl tail -f <program>`.
+
+### Provisioning Additional Services
+Interactive mode:
+```sh
+docker exec -it maestro deploy
 ```
 
-At runtime the entrypoint downloads GitHub tarballs (via `codeload.github.com`) into `/opt/services/service-a` and `/opt/services/service-b` if those directories are empty.
-
-## Run
-
+Environment mode (`SERVICES` compact form shown):
 ```sh
-docker run -d --name two-services \
+docker run -d --name maestro \
+  -e SERVICES='https://github.com/<owner>/alpha.git|8080|main|alpha|svc_alpha|;https://github.com/<owner>/beta.git|9090|main|beta|svc_beta|' \
   -p 8080:8080 -p 9090:9090 \
-  two-services
+  maestro-orchestrator
 ```
 
-Supervisor program names: `project1` and `project2`.
+Helpers ensure every service gets:
+- Dedicated UNIX user (`svc_<name>`), private home, and 0027 umask.
+- Temp/cache directories confined to `/tmp/<name>-tmp` and `/tmp/<name>-cache`.
+- Command quoting via `shlex.quote` to survive complex start commands.
 
+Removal:
 ```sh
-# Status
-docker exec -it two-services supervisorctl status
-
-# Restart one service
-docker exec -it two-services supervisorctl restart project1
-
-# Tail logs
-docker exec -it two-services supervisorctl tail -f project2
+docker exec -it maestro remove-service <name> --purge --delete-user
 ```
 
-## Overrides
-
-- Ports: `SERVICE_A_PORT` (default 8080), `SERVICE_B_PORT` (default 9090). Must differ.
-- Commands (see `supervisord.conf`):
-  - `SERVICE_A_CMD` (default: `python3 -m http.server ${SERVICE_A_PORT} --directory /opt/services/service-a --bind 0.0.0.0` if no Python app detected; otherwise assumes FastAPI `uvicorn app:app`)
-  - `SERVICE_B_CMD` (default: `python3 -m http.server ${SERVICE_B_PORT} --directory /opt/services/service-b --bind 0.0.0.0` if no Node app detected; otherwise `PORT=${SERVICE_B_PORT} node server.js`)
-
-Example with custom A command:
-
+## Security Hardening
 ```sh
-docker run -d --name two-services \
-  -e SERVICE_A_CMD='python3 -m http.server ${SERVICE_A_PORT:-8080} --bind 0.0.0.0' \
-  -p 8080:8080 -p 9090:9090 two-services
-```
-
-## Runtime Hardening (optional but recommended)
-
-Add common container hardening flags. If your apps need to write, mount tmpfs for writable paths.
-
-```sh
-docker run -d --name two-services \
+docker run -d --name maestro \
   --read-only \
   --cap-drop ALL --security-opt no-new-privileges \
   --pids-limit 512 --memory 1g --cpus 1.0 \
@@ -100,146 +115,28 @@ docker run -d --name two-services \
   --tmpfs /home/svc_a:rw,nosuid,size=32m \
   --tmpfs /home/svc_b:rw,nosuid,size=32m \
   -p 8080:8080 -p 9090:9090 \
-  two-services
+  maestro-orchestrator
 ```
-
 Notes:
-- If `noexec` on `/tmp` causes issues for your runtime, drop `noexec` from that mount.
-- Supervisor starts both services as unprivileged users (`svc_a`, `svc_b`) and logs to stdout/stderr.
-- Healthcheck pings both ports via `healthcheck.sh`. Adjust paths if your services differ.
-
-## GitHub Actions (GHCR)
-
-This repo includes a workflow to build and push the image to GHCR. It supports manual dispatch inputs for both repos and refs; on tags (`vX.Y.Z`) it also tags the image with `X.Y.Z` and `X.Y` and creates a GitHub Release.
-
-Steps:
-- Add `GHCR_PAT` secret (write:packages) or rely on `GITHUB_TOKEN`.
-- Run “Build and Push Image” workflow and provide:
-  - `service_a_repo`, `service_a_ref` (e.g., https://github.com/<owner>/project-1.git, main)
-  - `service_b_repo`, `service_b_ref` (e.g., https://github.com/<owner>/project-2.git, main)
-
-Pull and run:
-```sh
-docker pull ghcr.io/<owner>/supervisor-image-combination:latest
-docker run -d --name two -p 8080:8080 -p 9090:9090 ghcr.io/<owner>/supervisor-image-combination:latest
-```
-
-## Supervisor Details
-
-- Socket: `unix:///tmp/supervisor.sock`
-- PID file: `/tmp/supervisord.pid`
-- Configs: main at `/etc/supervisor/supervisord.conf`; includes `/etc/supervisor/conf.d/*.conf`
-- Control inside the container:
-  - `supervisorctl status | start project1 | stop project2 | restart project1`
-
-## Mounting Local Content (no rebuild)
-
-You can mount content into service directories; default static servers will serve it:
-
-```sh
-docker run -d --name two \
-  -v $(pwd)/site-a:/opt/services/service-a \
-  -v $(pwd)/site-b:/opt/services/service-b \
-  -p 8080:8080 -p 9090:9090 two-services
-```
+- Drop `noexec` on `/tmp` if your workloads need executable temp files.
+- Volume mounts must remain readable by the target service user (`svc_a`, `svc_b`, or the generated `svc_<name>` accounts).
 
 ## Troubleshooting
+- Port already allocated: choose free host ports (`-p 18080:8080` etc.) or stop the conflicting listener.
+- `supervisorctl` connection errors: ensure the container is running; the socket lives at `/tmp/supervisor.sock`.
+- Service failed to start: confirm the directory contains code, or force-enable via `SERVICE_A_ENABLED=true`. Use `DEFAULT_SERVICES_MODE=always` for the legacy static-server behaviour.
+- Permission denied on volume: ensure ownership or use bind mounts with proper UID/GID mapping.
 
-- Port is already allocated: pick free host ports (e.g., `-p 18080:8080 -p 19090:9090`) or stop the conflicting listener.
-- supervisorctl “no such file”: ensure the container is running; the socket path is `/tmp/supervisor.sock` (created by supervisord). Inside: `ls -l /tmp/supervisor.sock`.
-- Services crash on chdir with EACCES: the entrypoint ensures ownership/permissions; if you mount volumes, make sure they are readable by `svc_a`/`svc_b`.
+## CI / GHCR Workflow
+- Workflow builds on pushes to `main` and tags `vX.Y.Z`.
+- Manual runs (`workflow_dispatch`) accept overrides for service repos/refs/install commands.
+- Images push to `ghcr.io/<owner>/maestro-orchestrator` (`latest`, commit SHA, and semantic tags when available).
 
-## Security Notes
+## Project Status
+- License: MIT
+- Maintainers: see `CODEOWNERS` or GitHub contributors
+- Issues & ideas: open a ticket on the repository — feedback on the Maestro brand refresh is welcome!
 
-- Each service runs as its own user with 750 perms on its code tree and isolated tmp/cache directories.
-- The container defaults are compatible with read-only rootfs; use `--tmpfs` mounts for writable paths.
-- Consider network policies (firewall) to only expose required ports.
+---
 
-## Interactive Multi‑Project Deployer
-
-Run inside a started container to deploy N services dynamically:
-
-```sh
-docker exec -it <container_name> deploy
-```
-
-It will prompt for:
-- how many projects to deploy (1–20)
-- each project’s GitHub URL and ref (branch/tag/sha)
-- a service name (used for UNIX user and Supervisor program)
-- a port for that service
-- an optional custom start command (defaults are auto‑detected)
-
-What it does per service:
-- Creates a dedicated UNIX user (`svc_<name>`) and private home
-- Downloads the repo via GitHub tarball (no git necessary)
-- Installs dependencies when `requirements.txt`/`pyproject.toml` or `package.json` exist
-- Confines temp/cache to `/tmp/<name>-tmp` and `/tmp/<name>-cache`
-- Writes `/etc/supervisor/conf.d/program-<name>.conf` and reloads Supervisor
-
-You can then manage them independently with `supervisorctl` (status/start/stop/restart/tail).
-
-## Non‑Interactive Provisioning (ENV)
-
-Provision many services at boot or later without prompts. Two formats are supported:
-
-1) Compact `SERVICES` list (semicolon separates services; `|` separates fields):
-
-```sh
-# repo|port|ref|name|user|cmd (ref/name/user/cmd are optional)
-docker run -d --name two \
-  -e SERVICES='https://github.com/<owner>/project-1.git|8080|main|alpha|svc_alpha|;https://github.com/<owner>/project-2.git|9090|main|beta|svc_beta|' \
-  -p 8080:8080 -p 9090:9090 \
-  ghcr.io/<owner>/supervisor-image-combination:latest
-```
-
-2) Indexed variables (`SERVICES_COUNT` + `SVC_<i>_*`):
-
-```sh
-docker run -d --name two \
-  -e SERVICES_COUNT=2 \
-  -e SVC_1_REPO=https://github.com/<owner>/project-1.git -e SVC_1_PORT=8080 -e SVC_1_REF=main -e SVC_1_NAME=alpha -e SVC_1_USER=svc_alpha \
-  -e SVC_2_REPO=https://github.com/<owner>/project-2.git -e SVC_2_PORT=9090 -e SVC_2_REF=main -e SVC_2_NAME=beta -e SVC_2_USER=svc_beta \
-  -p 8080:8080 -p 9090:9090 \
-  ghcr.io/<owner>/supervisor-image-combination:latest
-```
-
-At boot the entrypoint pre‑provisions services (fetches sources, installs deps, writes program configs), then Supervisor starts and adopts them. You can also apply the spec later to a running container:
-
-```sh
-docker exec -it two deploy-from-env
-```
-
-## Service Inventory and Removal
-
-- List all services (table or JSON):
-
-```sh
-docker exec -it <container> list-services
-docker exec -it <container> list-services --json
-```
-
-- Remove a service safely (stop + unregister):
-
-```sh
-# Conf-only (default): stop + remove program conf + reload supervisor
-docker exec -it <container> remove-service <name>
-
-# Purge: also remove source dir, venv and tmp/cache
-docker exec -it <container> remove-service <name> --purge
-
-# Additionally remove the UNIX user (svc_<name>)
-docker exec -it <container> remove-service <name> --purge --delete-user
-
-# Dry-run to preview actions
-docker exec -it <container> remove-service <name> --purge --dry-run
-```
-
-### Default CI behavior
-
-- On push to `main`, the GitHub Actions workflow builds the image with defaults:
-  - `SERVICE_A_REPO=https://github.com/<owner>/project-1.git`
-  - `SERVICE_B_REPO=https://github.com/<owner>/project-2.git`
-  - refs default to `main`
-- On `workflow_dispatch`, you can override all build args from the UI.
-- On tags `vX.Y.Z`, images are additionally tagged with `X.Y.Z` and `X.Y` and a GitHub Release is created.
+**Upgrade note:** If you relied on the original "two static directories" behaviour, set `DEFAULT_SERVICES_MODE=always` or keep explicit `SERVICE_X_CMD` values. Otherwise Maestro only starts services after assets or commands are supplied, preventing port conflicts when provisioning more workloads.
