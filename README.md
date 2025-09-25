@@ -210,6 +210,31 @@ At boot the entrypoint pre‑provisions services (fetches sources, installs deps
 docker exec -it two deploy-from-env
 ```
 
+## Service Inventory and Removal
+
+- List all services (table or JSON):
+
+```sh
+docker exec -it <container> list-services
+docker exec -it <container> list-services --json
+```
+
+- Remove a service safely (stop + unregister):
+
+```sh
+# Conf-only (default): stop + remove program conf + reload supervisor
+docker exec -it <container> remove-service <name>
+
+# Purge: also remove source dir, venv and tmp/cache
+docker exec -it <container> remove-service <name> --purge
+
+# Additionally remove the UNIX user (svc_<name>)
+docker exec -it <container> remove-service <name> --purge --delete-user
+
+# Dry-run to preview actions
+docker exec -it <container> remove-service <name> --purge --dry-run
+```
+
 ### Default CI behavior
 
 - On push to `main`, the GitHub Actions workflow builds the image with defaults:

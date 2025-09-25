@@ -128,9 +128,12 @@ COPY healthcheck.sh /healthcheck.sh
 COPY scripts/entrypoint.sh /entrypoint.sh
 COPY scripts/deploy-interactive.sh /usr/local/bin/deploy
 COPY scripts/deploy-from-env.sh /usr/local/bin/deploy-from-env
+COPY scripts/list-services.sh /usr/local/bin/list-services
+COPY scripts/remove-service.sh /usr/local/bin/remove-service
 COPY scripts/lib-deploy.sh /usr/local/lib/deploy/lib-deploy.sh
 RUN chmod +x /healthcheck.sh /entrypoint.sh \
  && chmod +x /usr/local/bin/deploy /usr/local/bin/deploy-from-env \
+               /usr/local/bin/list-services /usr/local/bin/remove-service \
  && chmod 755 /usr/local/lib/deploy/lib-deploy.sh \
  && apt-get purge -y git \
  && apt-get autoremove -y \
