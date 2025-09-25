@@ -140,6 +140,7 @@ docker run -d --name maestro \
 Notes:
 - Drop `noexec` on `/tmp` if your workloads need executable temp files.
 - Volume mounts must remain readable by the target service user (`svc_a`, `svc_b`, or the generated `svc_<name>` accounts).
+- npm/yarn installs run with audit/funding checks disabled and avoid elevated privileges when bootstrapping toolchains.
 
 ## Troubleshooting
 - Port already allocated: choose free host ports (`-p 18080:8080` etc.) or stop the conflicting listener.

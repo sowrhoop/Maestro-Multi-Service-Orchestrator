@@ -31,7 +31,10 @@ ENV SERVICE_A_PORT=8080 \
     SERVICE_B_PORT=9090 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    NPM_CONFIG_UPDATE_NOTIFIER=false \
+    NPM_CONFIG_FUND=false \
+    NPM_CONFIG_AUDIT=false
 
 SHELL ["/bin/bash", "-eo", "pipefail", "-c"]
 
@@ -49,8 +52,10 @@ RUN --mount=type=cache,target=/var/cache/apt --mount=type=cache,target=/var/lib/
 WORKDIR /opt/services
 
 # Create dedicated unprivileged users for each service
-RUN useradd -r -u 10001 -m -d /home/svc_a -s /usr/sbin/nologin svc_a \
- && useradd -r -u 10002 -m -d /home/svc_b -s /usr/sbin/nologin svc_b
+RUN useradd --system --uid 10001 --create-home --home-dir /home/svc_a \
+        --shell /usr/sbin/nologin --no-log-init svc_a \
+ && useradd --system --uid 10002 --create-home --home-dir /home/svc_b \
+        --shell /usr/sbin/nologin --no-log-init svc_b
 
 # Isolated Python venv for Service A
 RUN python3 -m venv /opt/venv-a
@@ -114,10 +119,10 @@ RUN --mount=type=cache,target=/root/.npm \
       if [ -n "$SERVICE_B_INSTALL_CMD" ]; then \
         /bin/sh -lc "$SERVICE_B_INSTALL_CMD"; \
       elif [ -f pnpm-lock.yaml ]; then \
-        (corepack enable || true) && (corepack prepare pnpm@${PNPM_VERSION} --activate || npm install -g pnpm@${PNPM_VERSION}) \
+        (corepack enable || true) && (corepack prepare pnpm@${PNPM_VERSION} --activate || npm install --global --no-audit --no-fund --loglevel=error --unsafe-perm=false pnpm@${PNPM_VERSION}) \
           && pnpm install --frozen-lockfile --prod; \
       elif [ -f yarn.lock ]; then \
-        (corepack enable || true) && (corepack prepare yarn@${YARN_VERSION} --activate || npm install -g yarn@${YARN_VERSION}) \
+        (corepack enable || true) && (corepack prepare yarn@${YARN_VERSION} --activate || npm install --global --no-audit --no-fund --loglevel=error --unsafe-perm=false yarn@${YARN_VERSION}) \
           && yarn install --frozen-lockfile --production; \
       elif [ -f package-lock.json ]; then \
         npm ci ${NPM_INSTALL_OPTIONS} || npm install ${NPM_INSTALL_OPTIONS}; \
