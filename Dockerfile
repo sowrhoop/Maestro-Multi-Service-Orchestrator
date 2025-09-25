@@ -1,11 +1,12 @@
-# Combined image that clones two repos (project-1 and project-2)
-# and runs both under supervisord. Designed to avoid merging prebuilt images.
+# Maestro Multi-Service Orchestrator container, capable of cloning
+# two primary repos at build-time and bootstrapping additional
+# services at runtime under supervisord.
 
 FROM debian:bookworm-slim
 
 ARG DEBIAN_FRONTEND=noninteractive
 
-# Build args: point to your repositories and refs
+# Build args: optional repositories + refs for legacy slots
 ARG SERVICE_A_REPO
 ARG SERVICE_A_REF=main
 ARG SERVICE_A_SUBDIR=
@@ -43,7 +44,7 @@ RUN useradd -r -u 10001 -m -d /home/svc_a -s /usr/sbin/nologin svc_a \
 RUN python3 -m venv /opt/venv-a
 ENV PATH=/opt/venv-a/bin:$PATH
 
-# --- Service A: clone and install deps ---
+# --- Service A: clone and install deps (legacy slot) ---
 RUN if [ -n "$SERVICE_A_REPO" ]; then \
       git clone --depth=1 --branch "$SERVICE_A_REF" "$SERVICE_A_REPO" service-a; \
     fi
@@ -76,7 +77,7 @@ RUN set -eux; \
       fi; \
     fi
 
-# --- Service B: clone and install deps ---
+# --- Service B: clone and install deps (legacy slot) ---
 RUN if [ -n "$SERVICE_B_REPO" ]; then \
       git clone --depth=1 --branch "$SERVICE_B_REF" "$SERVICE_B_REPO" service-b; \
     fi
@@ -142,8 +143,8 @@ EXPOSE 8080 9090
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 CMD /healthcheck.sh || exit 1
 
-LABEL org.opencontainers.image.title="supervisor two-services (clone+install)" \
-      org.opencontainers.image.description="Clones project-1 and project-2, installs deps, and runs both under supervisord in one container" \
+LABEL org.opencontainers.image.title="maestro multi-service orchestrator" \
+      org.opencontainers.image.description="Polyglot supervisor-based runtime that bootstraps two primary repos and any number of additional services" \
       org.opencontainers.image.licenses="MIT"
 
 ENTRYPOINT ["/entrypoint.sh"]

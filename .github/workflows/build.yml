@@ -1,4 +1,4 @@
-name: Build and Push Image
+name: Build and Publish Maestro
 
 on:
   push:
@@ -7,32 +7,42 @@ on:
       - 'v*.*.*'
   workflow_dispatch:
     inputs:
-      service_a_repo:
-        description: Git URL for Service A (e.g., https://github.com/owner/project-1.git)
-        required: true
-      service_a_ref:
-        description: Git ref for Service A (branch/tag/sha)
+      slot_a_repo:
+        description: Git URL for legacy slot A (optional)
+        required: false
+      slot_a_ref:
+        description: Git ref for slot A (branch/tag/sha)
         default: main
-        required: true
-      service_a_subdir:
-        description: Optional subdirectory within Service A repo
         required: false
-      service_a_install_cmd:
-        description: Optional custom install command for Service A
+      slot_a_subdir:
+        description: Optional subdirectory within slot A repo
         required: false
-      service_b_repo:
-        description: Git URL for Service B (e.g., https://github.com/owner/project-2.git)
-        required: true
-      service_b_ref:
-        description: Git ref for Service B (branch/tag/sha)
+      slot_a_install_cmd:
+        description: Optional custom install command for slot A
+        required: false
+      slot_b_repo:
+        description: Git URL for legacy slot B (optional)
+        required: false
+      slot_b_ref:
+        description: Git ref for slot B (branch/tag/sha)
         default: main
-        required: true
-      service_b_subdir:
-        description: Optional subdirectory within Service B repo
         required: false
-      service_b_install_cmd:
-        description: Optional custom install command for Service B
+      slot_b_subdir:
+        description: Optional subdirectory within slot B repo
         required: false
+      slot_b_install_cmd:
+        description: Optional custom install command for slot B
+        required: false
+      image_suffix:
+        description: Optional suffix appended to the image name
+        required: false
+      platforms:
+        description: Optional comma-separated platform list (default linux/amd64)
+        required: false
+
+concurrency:
+  group: maestro-build-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -42,16 +52,96 @@ jobs:
   build:
     runs-on: ubuntu-latest
     env:
-      IMAGE_NAME: supervisor-image-combination
+      REGISTRY: ghcr.io
+      DEFAULT_IMAGE_NAME: maestro-orchestrator
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+
+      - name: Compute owner and image name
+        id: vars
+        env:
+          INPUT_SUFFIX: ${{ github.event.inputs.image_suffix || '' }}
+        run: |
+          set -euo pipefail
+          owner_lc="${GITHUB_REPOSITORY_OWNER,,}"
+          image_name="${DEFAULT_IMAGE_NAME}"
+          if [ -n "${INPUT_SUFFIX}" ]; then
+            image_name="${image_name}-${INPUT_SUFFIX}"
+          fi
+          echo "owner_lc=${owner_lc}" >> "$GITHUB_OUTPUT"
+          echo "image_name=${image_name}" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve build arguments
+        id: slots
+        env:
+          VAR_SLOT_A_REPO: ${{ vars.SLOT_A_REPO || '' }}
+          VAR_SLOT_A_REF: ${{ vars.SLOT_A_REF || 'main' }}
+          VAR_SLOT_A_SUBDIR: ${{ vars.SLOT_A_SUBDIR || '' }}
+          VAR_SLOT_A_INSTALL: ${{ vars.SLOT_A_INSTALL_CMD || '' }}
+          VAR_SLOT_B_REPO: ${{ vars.SLOT_B_REPO || '' }}
+          VAR_SLOT_B_REF: ${{ vars.SLOT_B_REF || 'main' }}
+          VAR_SLOT_B_SUBDIR: ${{ vars.SLOT_B_SUBDIR || '' }}
+          VAR_SLOT_B_INSTALL: ${{ vars.SLOT_B_INSTALL_CMD || '' }}
+          INPUT_SLOT_A_REPO: ${{ github.event.inputs.slot_a_repo || '' }}
+          INPUT_SLOT_A_REF: ${{ github.event.inputs.slot_a_ref || '' }}
+          INPUT_SLOT_A_SUBDIR: ${{ github.event.inputs.slot_a_subdir || '' }}
+          INPUT_SLOT_A_INSTALL: ${{ github.event.inputs.slot_a_install_cmd || '' }}
+          INPUT_SLOT_B_REPO: ${{ github.event.inputs.slot_b_repo || '' }}
+          INPUT_SLOT_B_REF: ${{ github.event.inputs.slot_b_ref || '' }}
+          INPUT_SLOT_B_SUBDIR: ${{ github.event.inputs.slot_b_subdir || '' }}
+          INPUT_SLOT_B_INSTALL: ${{ github.event.inputs.slot_b_install_cmd || '' }}
+        run: |
+          set -euo pipefail
+
+          slot_a_repo="${INPUT_SLOT_A_REPO:-${VAR_SLOT_A_REPO:-}}"
+          slot_a_ref="${INPUT_SLOT_A_REF:-${VAR_SLOT_A_REF:-}}"
+          slot_a_subdir="${INPUT_SLOT_A_SUBDIR:-${VAR_SLOT_A_SUBDIR:-}}"
+          slot_a_install="${INPUT_SLOT_A_INSTALL:-${VAR_SLOT_A_INSTALL:-}}"
+
+          slot_b_repo="${INPUT_SLOT_B_REPO:-${VAR_SLOT_B_REPO:-}}"
+          slot_b_ref="${INPUT_SLOT_B_REF:-${VAR_SLOT_B_REF:-}}"
+          slot_b_subdir="${INPUT_SLOT_B_SUBDIR:-${VAR_SLOT_B_SUBDIR:-}}"
+          slot_b_install="${INPUT_SLOT_B_INSTALL:-${VAR_SLOT_B_INSTALL:-}}"
+
+          # Only keep refs when a repo has been defined
+          if [ -z "$slot_a_repo" ]; then
+            slot_a_ref=""
+          fi
+          if [ -z "$slot_b_repo" ]; then
+            slot_b_ref=""
+          fi
+
+          {
+            echo "slot_a_repo=$slot_a_repo"
+            echo "slot_a_ref=$slot_a_ref"
+            echo "slot_a_subdir=$slot_a_subdir"
+            echo "slot_a_install=$slot_a_install"
+            echo "slot_b_repo=$slot_b_repo"
+            echo "slot_b_ref=$slot_b_ref"
+            echo "slot_b_subdir=$slot_b_subdir"
+            echo "slot_b_install=$slot_b_install"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ steps.vars.outputs.owner_lc }}/${{ steps.vars.outputs.image_name }}
+          tags: |
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=sha
+            type=ref,event=tag
+            type=semver,pattern={{version}},event=tag
+            type=semver,pattern={{major}}.{{minor}},event=tag
 
       - name: Login to GHCR
         uses: docker/login-action@v3
@@ -60,68 +150,26 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GHCR_PAT != '' && secrets.GHCR_PAT || secrets.GITHUB_TOKEN }}
 
-      - name: Compute tags
-        id: vars
-        run: |
-          echo "owner_lc=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
-          echo "sha_tag=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
-          REF_NAME="${GITHUB_REF_NAME}"
-          if [[ "${GITHUB_REF_TYPE}" == "tag" && "${REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            VERSION="${REF_NAME#v}"
-            MAJOR_MINOR=$(echo "$VERSION" | cut -d. -f1-2)
-            echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-            echo "version_mm=${MAJOR_MINOR}" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Resolve build args (with defaults)
-        id: args
-        shell: bash
-        env:
-          IN_SA_REPO: ${{ inputs.service_a_repo }}
-          IN_SA_REF: ${{ inputs.service_a_ref }}
-          IN_SA_SUBDIR: ${{ inputs.service_a_subdir }}
-          IN_SA_INSTALL: ${{ inputs.service_a_install_cmd }}
-          IN_SB_REPO: ${{ inputs.service_b_repo }}
-          IN_SB_REF: ${{ inputs.service_b_ref }}
-          IN_SB_SUBDIR: ${{ inputs.service_b_subdir }}
-          IN_SB_INSTALL: ${{ inputs.service_b_install_cmd }}
-          OWNER: ${{ github.repository_owner }}
-        run: |
-          # Defaults to owner/project-1 and owner/project-2 when inputs are empty
-          SA_REPO=${IN_SA_REPO:-"https://github.com/${OWNER}/project-1.git"}
-          SA_REF=${IN_SA_REF:-main}
-          SB_REPO=${IN_SB_REPO:-"https://github.com/${OWNER}/project-2.git"}
-          SB_REF=${IN_SB_REF:-main}
-          echo "service_a_repo=${SA_REPO}" >> "$GITHUB_OUTPUT"
-          echo "service_a_ref=${SA_REF}" >> "$GITHUB_OUTPUT"
-          echo "service_a_subdir=${IN_SA_SUBDIR}" >> "$GITHUB_OUTPUT"
-          echo "service_a_install_cmd=${IN_SA_INSTALL}" >> "$GITHUB_OUTPUT"
-          echo "service_b_repo=${SB_REPO}" >> "$GITHUB_OUTPUT"
-          echo "service_b_ref=${SB_REF}" >> "$GITHUB_OUTPUT"
-          echo "service_b_subdir=${IN_SB_SUBDIR}" >> "$GITHUB_OUTPUT"
-          echo "service_b_install_cmd=${IN_SB_INSTALL}" >> "$GITHUB_OUTPUT"
-
-      - name: Build and push
+      - name: Build and push image
         uses: docker/build-push-action@v6
         with:
           context: .
           file: Dockerfile
-          push: true
-          platforms: linux/amd64
-          tags: |
-            ghcr.io/${{ steps.vars.outputs.owner_lc }}/${{ env.IMAGE_NAME }}:latest
-            ghcr.io/${{ steps.vars.outputs.owner_lc }}/${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.sha_tag }}
-            ${{ steps.vars.outputs.version != '' && format('ghcr.io/{0}/{1}:{2}', steps.vars.outputs.owner_lc, env.IMAGE_NAME, steps.vars.outputs.version) || '' }}
-            ${{ steps.vars.outputs.version_mm != '' && format('ghcr.io/{0}/{1}:{2}', steps.vars.outputs.owner_lc, env.IMAGE_NAME, steps.vars.outputs.version_mm) || '' }}
+          push: ${{ github.event_name != 'pull_request' }}
+          platforms: ${{ github.event.inputs.platforms || vars.MAESTRO_PLATFORMS || 'linux/amd64' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
           build-args: |
-            SERVICE_A_REPO=${{ steps.args.outputs.service_a_repo }}
-            SERVICE_A_REF=${{ steps.args.outputs.service_a_ref }}
-            SERVICE_A_SUBDIR=${{ steps.args.outputs.service_a_subdir }}
-            SERVICE_A_INSTALL_CMD=${{ steps.args.outputs.service_a_install_cmd }}
-            SERVICE_B_REPO=${{ steps.args.outputs.service_b_repo }}
-            SERVICE_B_REF=${{ steps.args.outputs.service_b_ref }}
-            SERVICE_B_SUBDIR=${{ steps.args.outputs.service_b_subdir }}
-            SERVICE_B_INSTALL_CMD=${{ steps.args.outputs.service_b_install_cmd }}
+            SERVICE_A_REPO=${{ steps.slots.outputs.slot_a_repo }}
+            SERVICE_A_REF=${{ steps.slots.outputs.slot_a_ref }}
+            SERVICE_A_SUBDIR=${{ steps.slots.outputs.slot_a_subdir }}
+            SERVICE_A_INSTALL_CMD=${{ steps.slots.outputs.slot_a_install }}
+            SERVICE_B_REPO=${{ steps.slots.outputs.slot_b_repo }}
+            SERVICE_B_REF=${{ steps.slots.outputs.slot_b_ref }}
+            SERVICE_B_SUBDIR=${{ steps.slots.outputs.slot_b_subdir }}
+            SERVICE_B_INSTALL_CMD=${{ steps.slots.outputs.slot_b_install }}
 
       - name: Create GitHub Release (on tag)
         if: github.ref_type == 'tag'

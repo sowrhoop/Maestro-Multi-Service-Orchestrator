@@ -1,12 +1,12 @@
-IMAGE?=two-services
+IMAGE?=maestro-orchestrator
 PLATFORMS?=linux/amd64
 
 # Build arg defaults (override on make command line)
-SERVICE_A_REPO?=https://github.com/sowrhoop/sowrhoop.github.io.git
+SERVICE_A_REPO?=
 SERVICE_A_REF?=main
 SERVICE_A_SUBDIR?=
 SERVICE_A_INSTALL_CMD?=
-SERVICE_B_REPO?=https://github.com/sowrhoop/project-2.git
+SERVICE_B_REPO?=
 SERVICE_B_REF?=main
 SERVICE_B_SUBDIR?=
 SERVICE_B_INSTALL_CMD?=
