@@ -36,6 +36,21 @@ Dependency install autodetect:
 
 Tip: If you don’t pass repos at build time, the container still boots and serves static directories by default.
 
+Runtime fetch (no rebuild):
+- You can ask the container to fetch source at start using tarballs:
+
+```sh
+docker run -d --name two \
+  -e SERVICE_A_REPO=https://github.com/<owner>/project-1.git \
+  -e SERVICE_A_REF=main \
+  -e SERVICE_B_REPO=https://github.com/<owner>/project-2.git \
+  -e SERVICE_B_REF=main \
+  -p 8080:8080 -p 9090:9090 \
+  ghcr.io/<owner>/supervisor-image-combination:latest
+```
+
+At runtime the entrypoint downloads GitHub tarballs (via `codeload.github.com`) into `/opt/services/service-a` and `/opt/services/service-b` if those directories are empty.
+
 ## Run
 
 ```sh
@@ -139,3 +154,12 @@ docker run -d --name two \
 - Each service runs as its own user with 750 perms on its code tree and isolated tmp/cache directories.
 - The container defaults are compatible with read-only rootfs; use `--tmpfs` mounts for writable paths.
 - Consider network policies (firewall) to only expose required ports.
+
+### Default CI behavior
+
+- On push to `main`, the GitHub Actions workflow builds the image with defaults:
+  - `SERVICE_A_REPO=https://github.com/<owner>/project-1.git`
+  - `SERVICE_B_REPO=https://github.com/<owner>/project-2.git`
+  - refs default to `main`
+- On `workflow_dispatch`, you can override all build args from the UI.
+- On tags `vX.Y.Z`, images are additionally tagged with `X.Y.Z` and `X.Y` and a GitHub Release is created.

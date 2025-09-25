@@ -73,6 +73,34 @@ jobs:
             echo "version_mm=${MAJOR_MINOR}" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Resolve build args (with defaults)
+        id: args
+        shell: bash
+        env:
+          IN_SA_REPO: ${{ inputs.service_a_repo }}
+          IN_SA_REF: ${{ inputs.service_a_ref }}
+          IN_SA_SUBDIR: ${{ inputs.service_a_subdir }}
+          IN_SA_INSTALL: ${{ inputs.service_a_install_cmd }}
+          IN_SB_REPO: ${{ inputs.service_b_repo }}
+          IN_SB_REF: ${{ inputs.service_b_ref }}
+          IN_SB_SUBDIR: ${{ inputs.service_b_subdir }}
+          IN_SB_INSTALL: ${{ inputs.service_b_install_cmd }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          # Defaults to owner/project-1 and owner/project-2 when inputs are empty
+          SA_REPO=${IN_SA_REPO:-"https://github.com/${OWNER}/project-1.git"}
+          SA_REF=${IN_SA_REF:-main}
+          SB_REPO=${IN_SB_REPO:-"https://github.com/${OWNER}/project-2.git"}
+          SB_REF=${IN_SB_REF:-main}
+          echo "service_a_repo=${SA_REPO}" >> "$GITHUB_OUTPUT"
+          echo "service_a_ref=${SA_REF}" >> "$GITHUB_OUTPUT"
+          echo "service_a_subdir=${IN_SA_SUBDIR}" >> "$GITHUB_OUTPUT"
+          echo "service_a_install_cmd=${IN_SA_INSTALL}" >> "$GITHUB_OUTPUT"
+          echo "service_b_repo=${SB_REPO}" >> "$GITHUB_OUTPUT"
+          echo "service_b_ref=${SB_REF}" >> "$GITHUB_OUTPUT"
+          echo "service_b_subdir=${IN_SB_SUBDIR}" >> "$GITHUB_OUTPUT"
+          echo "service_b_install_cmd=${IN_SB_INSTALL}" >> "$GITHUB_OUTPUT"
+
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
@@ -86,14 +114,14 @@ jobs:
             ${{ steps.vars.outputs.version != '' && format('ghcr.io/{0}/{1}:{2}', steps.vars.outputs.owner_lc, env.IMAGE_NAME, steps.vars.outputs.version) || '' }}
             ${{ steps.vars.outputs.version_mm != '' && format('ghcr.io/{0}/{1}:{2}', steps.vars.outputs.owner_lc, env.IMAGE_NAME, steps.vars.outputs.version_mm) || '' }}
           build-args: |
-            SERVICE_A_REPO=${{ inputs.service_a_repo }}
-            SERVICE_A_REF=${{ inputs.service_a_ref }}
-            SERVICE_A_SUBDIR=${{ inputs.service_a_subdir }}
-            SERVICE_A_INSTALL_CMD=${{ inputs.service_a_install_cmd }}
-            SERVICE_B_REPO=${{ inputs.service_b_repo }}
-            SERVICE_B_REF=${{ inputs.service_b_ref }}
-            SERVICE_B_SUBDIR=${{ inputs.service_b_subdir }}
-            SERVICE_B_INSTALL_CMD=${{ inputs.service_b_install_cmd }}
+            SERVICE_A_REPO=${{ steps.args.outputs.service_a_repo }}
+            SERVICE_A_REF=${{ steps.args.outputs.service_a_ref }}
+            SERVICE_A_SUBDIR=${{ steps.args.outputs.service_a_subdir }}
+            SERVICE_A_INSTALL_CMD=${{ steps.args.outputs.service_a_install_cmd }}
+            SERVICE_B_REPO=${{ steps.args.outputs.service_b_repo }}
+            SERVICE_B_REF=${{ steps.args.outputs.service_b_ref }}
+            SERVICE_B_SUBDIR=${{ steps.args.outputs.service_b_subdir }}
+            SERVICE_B_INSTALL_CMD=${{ steps.args.outputs.service_b_install_cmd }}
 
       - name: Create GitHub Release (on tag)
         if: github.ref_type == 'tag'
