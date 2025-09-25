@@ -1,8 +1,12 @@
+# syntax=docker/dockerfile:1.7
+
 # Maestro Multi-Service Orchestrator container, capable of cloning
 # two primary repos at build-time and bootstrapping additional
 # services at runtime under supervisord.
+ARG BUILDPLATFORM
+ARG TARGETPLATFORM
 
-FROM debian:bookworm-slim
+FROM --platform=$TARGETPLATFORM debian:bookworm-slim@sha256:6ea5bb7a8a798edc2cc74fd07c2c8ed5fcd425f4b125243ff54f89488f8f17d4 AS base
 
 ARG DEBIAN_FRONTEND=noninteractive
 
@@ -17,21 +21,29 @@ ARG SERVICE_B_REF=main
 ARG SERVICE_B_SUBDIR=
 ARG SERVICE_B_INSTALL_CMD=
 
+ARG PIP_INSTALL_OPTIONS=
+ARG NPM_INSTALL_OPTIONS=--omit=dev --no-audit --no-fund
+ARG PNPM_VERSION=8.15.5
+ARG YARN_VERSION=1.22.22
+
 # Runtime ports (can be overridden at run time)
 ENV SERVICE_A_PORT=8080 \
     SERVICE_B_PORT=9090 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_DISABLE_PIP_VERSION_CHECK=1
 
-# Base system deps + Python + Node (Debian packages) + Supervisor
-RUN apt-get update \
+SHELL ["/bin/bash", "-eo", "pipefail", "-c"]
+
+# Common base packages
+RUN --mount=type=cache,target=/var/cache/apt --mount=type=cache,target=/var/lib/apt \
+    apt-get update \
  && apt-get install -y --no-install-recommends \
     curl ca-certificates \
     python3 python3-pip python3-venv \
     nodejs npm \
-    git supervisor \
+    supervisor \
+    git \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /opt/services
@@ -61,17 +73,16 @@ RUN if [ -n "$SERVICE_A_SUBDIR" ] && [ -d "service-a/$SERVICE_A_SUBDIR" ]; then 
 RUN if [ -d "$SA_DIR/.git" ]; then rm -rf "$SA_DIR/.git"; fi
 
 # Install dependencies for Service A
-RUN set -eux; \
+RUN --mount=type=cache,target=/root/.cache/pip \
+    set -eux; \
     if [ -d "$SA_DIR" ]; then \
       cd "$SA_DIR"; \
       if [ -n "$SERVICE_A_INSTALL_CMD" ]; then \
         /bin/sh -lc "$SERVICE_A_INSTALL_CMD"; \
       elif [ -f requirements.txt ]; then \
-        pip install --no-cache-dir -r requirements.txt; \
-      elif [ -f pyproject.toml ]; then \
-        pip install --no-cache-dir .; \
-      elif [ -f setup.py ]; then \
-        pip install --no-cache-dir .; \
+        pip install ${PIP_INSTALL_OPTIONS} -r requirements.txt; \
+      elif [ -f pyproject.toml ] || [ -f setup.py ]; then \
+        pip install ${PIP_INSTALL_OPTIONS} .; \
       else \
         echo "[INFO] Service A: no Python manifest found; skipping pip install"; \
       fi; \
@@ -95,21 +106,23 @@ RUN if [ -d "$SB_DIR/.git" ]; then rm -rf "$SB_DIR/.git"; fi
 
 # Install dependencies for Service B (Node: pnpm/yarn/npm autodetect)
 ENV NODE_ENV=production
-RUN set -eux; \
+RUN --mount=type=cache,target=/root/.npm \
+    --mount=type=cache,target=/root/.local/share/pnpm \
+    set -eux; \
     if [ -d "$SB_DIR" ]; then \
       cd "$SB_DIR"; \
       if [ -n "$SERVICE_B_INSTALL_CMD" ]; then \
         /bin/sh -lc "$SERVICE_B_INSTALL_CMD"; \
       elif [ -f pnpm-lock.yaml ]; then \
-        (corepack enable || true) && (corepack prepare pnpm@latest --activate || npm i -g pnpm) \
+        (corepack enable || true) && (corepack prepare pnpm@${PNPM_VERSION} --activate || npm install -g pnpm@${PNPM_VERSION}) \
           && pnpm install --frozen-lockfile --prod; \
       elif [ -f yarn.lock ]; then \
-        (corepack enable || true) && (corepack prepare yarn@stable --activate || npm i -g yarn) \
+        (corepack enable || true) && (corepack prepare yarn@${YARN_VERSION} --activate || npm install -g yarn@${YARN_VERSION}) \
           && yarn install --frozen-lockfile --production; \
       elif [ -f package-lock.json ]; then \
-        npm ci --omit=dev || npm install --omit=dev --no-audit --no-fund; \
+        npm ci ${NPM_INSTALL_OPTIONS} || npm install ${NPM_INSTALL_OPTIONS}; \
       elif [ -f package.json ]; then \
-        npm install --omit=dev --no-audit --no-fund; \
+        npm install ${NPM_INSTALL_OPTIONS}; \
       else \
         echo "[INFO] Service B: no Node manifest found; skipping install"; \
       fi; \

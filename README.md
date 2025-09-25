@@ -25,16 +25,31 @@ Maestro is a production-grade container blueprint for running two or more applic
 
 ### Build
 ```sh
+# direct Docker CLI
 docker build -t maestro-orchestrator . \
   --build-arg SERVICE_A_REPO=https://github.com/<owner>/service-a.git \
   --build-arg SERVICE_A_REF=main \
   --build-arg SERVICE_B_REPO=https://github.com/<owner>/service-b.git \
   --build-arg SERVICE_B_REF=main
+
+# Makefile helper (same build args, shorter command)
+make build IMAGE=maestro-orchestrator \
+  SERVICE_A_REPO=https://github.com/<owner>/service-a.git \
+  SERVICE_B_REPO=https://github.com/<owner>/service-b.git
+
+# buildx multi-architecture build (set PUSH=true to push instead of load)
+make buildx PUSH=true IMAGE=ghcr.io/<owner>/maestro-orchestrator \
+  PLATFORMS=linux/amd64,linux/arm64
 ```
+
+> Build commands require Docker BuildKit (Docker 20.10+). If you haven't enabled it, export `DOCKER_BUILDKIT=1` before running the commands above.
 
 Optional build arguments:
 - `SERVICE_A_SUBDIR`, `SERVICE_B_SUBDIR`: if the runnable project lives below the repo root.
 - `SERVICE_A_INSTALL_CMD`, `SERVICE_B_INSTALL_CMD`: custom install steps (useful to mirror each project’s Dockerfile).
+- `PIP_INSTALL_OPTIONS`: appended to the pip command (e.g., `--require-hashes`).
+- `NPM_INSTALL_OPTIONS`: overrides default npm flags (defaults to `--omit=dev --no-audit --no-fund`).
+- `PNPM_VERSION`, `YARN_VERSION`: pin pnpm/yarn toolchain versions when detected.
 
 Dependency autodetect:
 - Python (`requirements.txt` → `pip install -r`; otherwise `pyproject.toml` / `setup.py` → `pip install .`).
