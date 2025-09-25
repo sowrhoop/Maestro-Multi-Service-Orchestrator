@@ -91,6 +91,11 @@ The entrypoint downloads tarballs via `codeload.github.com` when `/opt/services/
 - `SERVICE_A_CMD`, `SERVICE_B_CMD`: override launch command. If unset Maestro inspects the directory (Python manifests → `uvicorn app:app`; Node projects → `node server.js` or `npm start`; fallback static server).
 - `SERVICE_A_TARBALL`, `SERVICE_B_TARBALL`: provide a direct tarball URL instead of a Git repo.
 
+### Entrypoint & Supervisor Controls
+- `ENTRYPOINT_LOG_LEVEL`: adjust runtime verbosity (`debug`, `info`, `warn`, `error`; default `info`).
+- `SUPERVISOR_CONF_DIR`: override where generated program configs are written/read (default `/etc/supervisor/conf.d`). CLI helpers (`list-services`, `remove-service`) honour the same variable.
+- Generated program environments automatically expose `/opt/venv-<name>/bin` and `<service>/node_modules/.bin` on `PATH` when those directories exist.
+
 ### Health & Observability
 - `HEALTHCHECK_PORTS`: space/comma separated list (`8080 9090`). When unset, only enabled default slots are probed; if none exist, `supervisorctl status` is used.
 - `list-services [--json]`: prints every Supervisor program with user, directory, status and command.

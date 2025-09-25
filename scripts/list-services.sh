@@ -1,16 +1,20 @@
 #!/usr/bin/env sh
 set -eu
 
+SUPERVISOR_CONF_DIR=${SUPERVISOR_CONF_DIR:-/etc/supervisor/conf.d}
+
 FORMAT="table"
 if [ "${1:-}" = "--json" ]; then
   FORMAT="json"
 fi
 
-python3 - "$FORMAT" <<'PY'
-import sys, glob, configparser, shlex, subprocess, json
+python3 - "$FORMAT" "$SUPERVISOR_CONF_DIR" <<'PY'
+import sys, glob, configparser, shlex, subprocess, json, os
 
 fmt = sys.argv[1]
-files = sorted(glob.glob('/etc/supervisor/conf.d/program-*.conf'))
+conf_dir = sys.argv[2]
+pattern = os.path.join(conf_dir, 'program-*.conf')
+files = sorted(glob.glob(pattern))
 status_map = {}
 try:
     proc = subprocess.run(['supervisorctl', 'status'], check=False, capture_output=True, text=True)

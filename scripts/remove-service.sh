@@ -1,6 +1,8 @@
 #!/usr/bin/env sh
 set -eu
 
+SUPERVISOR_CONF_DIR=${SUPERVISOR_CONF_DIR:-/etc/supervisor/conf.d}
+
 usage() {
   cat <<USAGE
 Usage: remove-service <name> [--conf-only] [--purge] [--delete-user] [--dry-run]
@@ -34,7 +36,7 @@ while [ $# -gt 0 ]; do
   shift || true
 done
 
-CONF="/etc/supervisor/conf.d/program-${NAME}.conf"
+CONF="${SUPERVISOR_CONF_DIR}/program-${NAME}.conf"
 if [ ! -f "$CONF" ]; then
   echo "No program conf found for '${NAME}' at $CONF" >&2
 fi

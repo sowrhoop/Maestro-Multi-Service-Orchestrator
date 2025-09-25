@@ -2,6 +2,8 @@
 # Shared helpers for provisioning services under Supervisor
 set -eu
 
+SUPERVISOR_CONF_DIR=${SUPERVISOR_CONF_DIR:-/etc/supervisor/conf.d}
+
 sanitize() {
   printf "%s" "$1" | tr '[:upper:] ' '[:lower:]-' | sed 's/[^a-z0-9._-]//g'
 }
@@ -105,14 +107,22 @@ PY
 
 install_deps_if_any() {
   dir="$1"; name="$2"
+  venv="/opt/venv-${name}"
+  npm_flags="${NPM_INSTALL_OPTIONS:---omit=dev --no-audit --no-fund}"
+
   if [ -f "$dir/requirements.txt" ] || [ -f "$dir/pyproject.toml" ] || [ -f "$dir/setup.py" ]; then
-    python3 -m venv "/opt/venv-${name}" || true
-    "/opt/venv-${name}/bin/pip" install --no-cache-dir -r "$dir/requirements.txt" 2>/dev/null || \
-    "/opt/venv-${name}/bin/pip" install --no-cache-dir "$dir" 2>/dev/null || true
-    export PATH="/opt/venv-${name}/bin:$PATH"
+    if python3 -m venv "$venv" >/dev/null 2>&1; then
+      if [ -f "$dir/requirements.txt" ]; then
+        "$venv/bin/pip" install --no-cache-dir -r "$dir/requirements.txt" >/dev/null 2>&1 || \
+        "$venv/bin/pip" install --no-cache-dir "$dir" >/dev/null 2>&1 || true
+      else
+        "$venv/bin/pip" install --no-cache-dir "$dir" >/dev/null 2>&1 || true
+      fi
+    fi
   fi
+
   if [ -f "$dir/package.json" ]; then
-    (cd "$dir" && (npm ci --omit=dev || npm install --omit=dev --no-audit --no-fund) && npm cache clean --force || true)
+    (cd "$dir" && (npm ci ${npm_flags} || npm install ${npm_flags}) && npm cache clean --force || true)
   fi
 }
 
@@ -126,12 +136,30 @@ write_program_conf() {
     echo "write_program_conf: failed to quote command for $name" >&2
     return 1
   fi
-  cat >"/etc/supervisor/conf.d/program-${name}.conf" <<EOF
+  env_line="HOME=\"/home/${user}\",TMPDIR=\"${tmpd}\",XDG_CACHE_HOME=\"${cache}\""
+  venv_bin="/opt/venv-${name}/bin"
+  node_bin="${dir}/node_modules/.bin"
+  path_prefix=""
+  if [ -d "$venv_bin" ]; then
+    path_prefix="$venv_bin"
+  fi
+  if [ -d "$node_bin" ]; then
+    if [ -n "$path_prefix" ]; then
+      path_prefix="${path_prefix}:${node_bin}"
+    else
+      path_prefix="$node_bin"
+    fi
+  fi
+  if [ -n "$path_prefix" ]; then
+    env_line="${env_line},PATH=\"${path_prefix}:\\$PATH\""
+  fi
+
+  cat >"${SUPERVISOR_CONF_DIR}/program-${name}.conf" <<EOF
 [program:${name}]
 directory=${dir}
 command=/bin/sh -c ${quoted_cmd}
 user=${user}
-environment=HOME="/home/${user}",TMPDIR="${tmpd}",XDG_CACHE_HOME="${cache}"
+environment=${env_line}
 umask=0027
 autostart=true
 autorestart=unexpected

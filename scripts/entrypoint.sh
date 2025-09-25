@@ -6,13 +6,41 @@ set -eu
 
 umask 0027
 
-log() {
-  printf '[entrypoint] %s\n' "$*" >&2
-}
+ENTRYPOINT_LOG_LEVEL=${ENTRYPOINT_LOG_LEVEL:-info}
 
 to_lower() {
   printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
 }
+
+log_level_value() {
+  case "$(to_lower "$1")" in
+    debug) printf '0';;
+    info) printf '1';;
+    warn|warning) printf '2';;
+    error|err) printf '3';;
+    *) printf '1';;
+  esac
+}
+
+current_log_level=$(log_level_value "$ENTRYPOINT_LOG_LEVEL")
+
+log_emit() {
+  level_name="$1"; shift
+  level_value=$(log_level_value "$level_name")
+  if [ "$level_value" -lt "$current_log_level" ]; then
+    return 0
+  fi
+  printf '[entrypoint][%s] %s\n' "$level_name" "$*" >&2
+}
+
+log_debug() { log_emit debug "$@"; }
+log_info() { log_emit info "$@"; }
+log_warn() { log_emit warn "$@"; }
+log_error() { log_emit error "$@"; }
+
+trap 'status=$?; if [ $status -ne 0 ]; then log_error "Exiting with status $status"; fi' EXIT
+
+log_info "Entrypoint log level set to ${ENTRYPOINT_LOG_LEVEL}"
 
 is_true() {
   case "$(to_lower "$1")" in
@@ -41,12 +69,12 @@ validate_port() {
   name="$1"; value="$2"
   case "$value" in
     ''|*[!0-9]*)
-      printf 'Error: %s (%s) must be an integer.\n' "$name" "$value" >&2
+      log_error "${name} (${value}) must be an integer"
       exit 1
       ;;
   esac
   if [ "$value" -lt 1 ] || [ "$value" -gt 65535 ]; then
-    printf 'Error: %s (%s) must be between 1 and 65535.\n' "$name" "$value" >&2
+    log_error "${name} (${value}) must be between 1 and 65535"
     exit 1
   fi
 }
@@ -79,7 +107,7 @@ resolve_default_mode() {
   case "$(to_lower "$mode")" in
     auto|always|never) printf '%s' "$(to_lower "$mode")" ;;
     *)
-      log "Unknown DEFAULT_SERVICES_MODE='$mode', falling back to auto"
+      log_warn "Unknown DEFAULT_SERVICES_MODE='$mode', falling back to auto"
       printf 'auto'
       ;;
   esac
@@ -93,7 +121,7 @@ bootstrap_builtin_service() {
   default_port="$5"
   defaults_mode="$6"
 
-  conf_path="/etc/supervisor/conf.d/program-${program}.conf"
+  conf_path="${SUPERVISOR_CONF_DIR}/program-${program}.conf"
   rm -f "$conf_path"
 
   eval enabled_override="\${SERVICE_${slot}_ENABLED:-}"
@@ -110,17 +138,17 @@ bootstrap_builtin_service() {
       start_service=1
       force_empty_ok=1
     elif is_false "$enabled_override"; then
-      log "${program}: disabled via SERVICE_${slot}_ENABLED=${enabled_override}"
+      log_info "${program}: disabled via SERVICE_${slot}_ENABLED=${enabled_override}"
       return 0
     else
-      log "${program}: ignoring unrecognised SERVICE_${slot}_ENABLED=${enabled_override}"
+      log_warn "${program}: ignoring unrecognised SERVICE_${slot}_ENABLED=${enabled_override}"
     fi
   fi
 
   if [ "$start_service" -eq 0 ]; then
     case "$defaults_mode" in
       never)
-        log "${program}: default services disabled (DEFAULT_SERVICES_MODE=never)"
+        log_info "${program}: default services disabled (DEFAULT_SERVICES_MODE=never)"
         return 0
         ;;
       always)
@@ -142,7 +170,7 @@ bootstrap_builtin_service() {
   fi
 
   if [ "$start_service" -eq 0 ]; then
-    log "${program}: nothing to run; skipping"
+    log_info "${program}: nothing to run; skipping"
     return 0
   fi
 
@@ -150,15 +178,15 @@ bootstrap_builtin_service() {
 
   if dir_empty "$service_dir"; then
     if [ -n "$tarball_url" ]; then
-      log "${program}: fetching tarball ${tarball_url}"
+      log_info "${program}: fetching tarball ${tarball_url}"
       if ! fetch_tar_into_dir "$tarball_url" "$service_dir"; then
-        log "${program}: failed to fetch tarball"
+        log_warn "${program}: failed to fetch tarball"
       fi
     elif [ -n "$repo_url" ]; then
       archive_url=$(codeload_url "$repo_url" "$repo_ref")
-      log "${program}: fetching ${repo_url}@${repo_ref}"
+      log_info "${program}: fetching ${repo_url}@${repo_ref}"
       if ! fetch_tar_into_dir "$archive_url" "$service_dir"; then
-        log "${program}: failed to fetch repository"
+        log_warn "${program}: failed to fetch repository"
       fi
     fi
   fi
@@ -178,21 +206,26 @@ bootstrap_builtin_service() {
   fi
 
   if dir_empty "$service_dir" && [ "$force_empty_ok" -eq 0 ]; then
-    log "${program}: directory still empty after preparation; not registering"
+    log_warn "${program}: directory still empty after preparation; not registering"
     return 0
   fi
 
   if ! write_program_conf "$program" "$service_dir" "$command_value" "$service_user"; then
-    log "${program}: failed to write supervisor configuration"
+    log_error "${program}: failed to write supervisor configuration"
     return 1
   fi
 
-  log "${program}: registered command '${command_value}' on port ${resolved_port}"
+  REGISTERED_PROGRAMS="${REGISTERED_PROGRAMS} ${program}"
+  log_info "${program}: registered command '${command_value}' on port ${resolved_port}"
   return 0
 }
 
-mkdir -p /etc/supervisor/conf.d
+SUPERVISOR_CONF_DIR=${SUPERVISOR_CONF_DIR:-/etc/supervisor/conf.d}
+mkdir -p "$SUPERVISOR_CONF_DIR"
 mkdir -p /tmp/supervisor && chmod 700 /tmp/supervisor || true
+log_debug "Supervisor configuration directory: ${SUPERVISOR_CONF_DIR}"
+
+REGISTERED_PROGRAMS=""
 
 prepare_user_home svc_a
 prepare_user_home svc_b
@@ -207,7 +240,7 @@ validate_port SERVICE_B_PORT "$SERVICE_B_PORT"
 export SERVICE_A_PORT SERVICE_B_PORT
 
 if [ "$SERVICE_A_PORT" = "$SERVICE_B_PORT" ]; then
-  printf 'Error: SERVICE_A_PORT (%s) and SERVICE_B_PORT (%s) must differ.\n' "$SERVICE_A_PORT" "$SERVICE_B_PORT" >&2
+  log_error "SERVICE_A_PORT (${SERVICE_A_PORT}) and SERVICE_B_PORT (${SERVICE_B_PORT}) must differ"
   exit 1
 fi
 
@@ -218,12 +251,24 @@ bootstrap_builtin_service "B" "project2" "/opt/services/service-b" "svc_b" "$SER
 
 if [ -n "${SERVICES:-}" ] || [ -n "${SERVICES_COUNT:-}" ]; then
   if [ -x /usr/local/bin/deploy-from-env ]; then
-    log "Applying SERVICES* specification before Supervisor starts"
+    log_info "Applying SERVICES* specification before Supervisor starts"
     /usr/local/bin/deploy-from-env --prepare-only || true
   fi
 fi
 
-program_count=$(find /etc/supervisor/conf.d -maxdepth 1 -name 'program-*.conf' 2>/dev/null | wc -l | tr -d ' ')
-log "Supervisor programs prepared: ${program_count}"
+program_conf_glob=$(find "$SUPERVISOR_CONF_DIR" -maxdepth 1 -name 'program-*.conf' 2>/dev/null)
+program_count=$(printf '%s\n' "$program_conf_glob" | awk 'NF{c++} END{printf (c ? c : 0)}')
+trimmed_programs=$(printf '%s' "$REGISTERED_PROGRAMS" | tr -s ' ' | sed 's/^ //')
+if [ "$program_count" -eq 0 ]; then
+  log_warn "No supervisor programs configured; supervisord will start idle"
+else
+  if [ -n "$trimmed_programs" ]; then
+    log_info "Supervisor programs prepared (${program_count}): ${trimmed_programs}"
+  else
+    log_info "Supervisor programs detected: ${program_count}"
+  fi
+fi
 
+log_info "Launching supervisord"
+trap - EXIT
 exec /usr/bin/supervisord -n
