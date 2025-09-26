@@ -109,6 +109,43 @@ derive_tarball_name() {
   sanitize "$base"
 }
 
+derive_service_user() {
+  name="$1"
+  fallback="$2"
+  slot_hint="$3"
+
+  candidate=$(printf '%s' "$name" | tr '.-' '__')
+  candidate=$(printf '%s' "$candidate" | sed 's/[^a-z0-9_]//g')
+  candidate=$(printf '%.32s' "$candidate")
+
+  if [ -z "$candidate" ]; then
+    candidate="$fallback"
+  fi
+
+  case "$candidate" in
+    ''|[!a-z_]* )
+      prefix="svc"
+      if [ -n "$slot_hint" ]; then
+        prefix="${prefix}_${slot_hint}"
+      fi
+      candidate="${prefix}_${candidate}"
+      candidate=$(printf '%s' "$candidate" | sed 's/[^a-z0-9_]//g')
+      candidate=$(printf '%.32s' "$candidate")
+      ;;
+  esac
+
+  case "$candidate" in
+    [a-z_][a-z0-9_]* ) : ;;
+    *) candidate="$fallback" ;;
+  esac
+
+  if [ -z "$candidate" ]; then
+    candidate="$fallback"
+  fi
+
+  printf '%s' "$candidate"
+}
+
 # Resolve default services mode: auto|always|never
 resolve_default_mode() {
   mode="${DEFAULT_SERVICES_MODE:-}"
@@ -132,7 +169,7 @@ bootstrap_builtin_service() {
   slot="$1"       # A or B
   default_program="$2"
   default_service_dir="$3"
-  service_user="$4"
+  default_user="$4"
   default_port="$5"
   defaults_mode="$6"
 
@@ -248,6 +285,14 @@ bootstrap_builtin_service() {
     return 0
   fi
 
+  lower_slot=$(to_lower "$slot")
+
+  service_user="$default_user"
+  if [ -n "$identity_source" ]; then
+    service_user=$(derive_service_user "$program" "$default_user" "$lower_slot")
+  fi
+  ensure_user "$service_user"
+  prepare_user_home "$service_user"
   prepare_service_dir "$service_dir" "$service_user"
 
   if dir_empty "$service_dir"; then
@@ -304,12 +349,6 @@ mkdir -p /tmp/supervisor && chmod 700 /tmp/supervisor || true
 log_debug "Supervisor configuration directory: ${SUPERVISOR_CONF_DIR}"
 
 REGISTERED_PROGRAMS=""
-
-prepare_user_home svc_a
-prepare_user_home svc_b
-
-prepare_service_dir /opt/services/service-a svc_a
-prepare_service_dir /opt/services/service-b svc_b
 
 SERVICE_A_PORT="${SERVICE_A_PORT:-8080}"
 SERVICE_B_PORT="${SERVICE_B_PORT:-9090}"

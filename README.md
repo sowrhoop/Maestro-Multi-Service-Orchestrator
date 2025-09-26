@@ -91,7 +91,7 @@ The entrypoint downloads tarballs via `codeload.github.com` when `/opt/services/
 - `SERVICE_A_PORT`, `SERVICE_B_PORT`: default 8080/9090; must differ. Ports are validated at runtime.
 - `SERVICE_A_CMD`, `SERVICE_B_CMD`: override launch command. If unset Maestro inspects the directory (Python manifests → `uvicorn app:app`; Node projects → `node server.js` or `npm start`; fallback static server).
 - `SERVICE_A_TARBALL`, `SERVICE_B_TARBALL`: provide a direct tarball URL instead of a Git repo.
-- `SERVICE_A_NAME`, `SERVICE_B_NAME`: optional explicit names for the legacy slots. When omitted, Maestro derives the name from the repo/tarball URL and places the code under `/opt/services/<name>`; the same name is used for the Supervisor program ID.
+- `SERVICE_A_NAME`, `SERVICE_B_NAME`: optional explicit names for the legacy slots. When omitted, Maestro derives the name from the repo/tarball URL and places the code under `/opt/services/<name>`; the same name is used for the Supervisor program ID and the service’s UNIX user.
 
 ### Entrypoint & Supervisor Controls
 - `ENTRYPOINT_LOG_LEVEL`: adjust runtime verbosity (`debug`, `info`, `warn`, `error`; default `info`).
@@ -118,7 +118,7 @@ docker run -d --name maestro \
 ```
 
 Helpers ensure every service gets:
-- Dedicated UNIX user (`svc_<name>`), private home, and 0027 umask.
+- Dedicated UNIX user per service (dynamic slots use `svc_<name>`, legacy slots reuse the derived repo/tarball name with a sanitized prefix) plus a private home and 0027 umask.
 - Temp/cache directories confined to `/tmp/<name>-tmp` and `/tmp/<name>-cache`.
 - Command quoting via `shlex.quote` to survive complex start commands.
 
@@ -134,14 +134,14 @@ docker run -d --name maestro \
   --cap-drop ALL --security-opt no-new-privileges \
   --pids-limit 512 --memory 1g --cpus 1.0 \
   --tmpfs /tmp:rw,noexec,nosuid,size=64m \
-  --tmpfs /home/svc_a:rw,nosuid,size=32m \
-  --tmpfs /home/svc_b:rw,nosuid,size=32m \
+  --tmpfs /home/<user_a>:rw,nosuid,size=32m \
+  --tmpfs /home/<user_b>:rw,nosuid,size=32m \
   -p 8080:8080 -p 9090:9090 \
   maestro-orchestrator
 ```
-Notes:
 - Drop `noexec` on `/tmp` if your workloads need executable temp files.
-- Volume mounts must remain readable by the target service user (`svc_a`, `svc_b`, or the generated `svc_<name>` accounts).
+- Adjust `/home/<user>` tmpfs mounts to match the derived user names if you override the defaults (e.g., `/home/svc_myrepo`).
+- Volume mounts must remain readable by the target service user (sanitized repo name for legacy slots, or the generated `svc_<name>` accounts).
 - npm/yarn installs run with audit/funding checks disabled and avoid elevated privileges when bootstrapping toolchains.
 
 ## Troubleshooting
