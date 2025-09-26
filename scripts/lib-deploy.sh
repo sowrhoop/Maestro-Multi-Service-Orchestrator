@@ -75,18 +75,19 @@ detect_default_cmd() {
     if [ -n "$script" ]; then
       printf "PORT=%s node %s" "$port" "$script"
     else
-      start_cmd=$(python3 - <<'PY' "$d")
-import json, os, sys
-path = os.path.join(sys.argv[1], "package.json")
+      start_cmd=$(PACKAGE_JSON_DIR="$d" python3 <<'PY'
+import json, os
+dir_path = os.environ.get("PACKAGE_JSON_DIR", "")
 try:
-    with open(path, "r", encoding="utf-8") as fh:
+    with open(os.path.join(dir_path, "package.json"), "r", encoding="utf-8") as fh:
         data = json.load(fh)
 except Exception:
     print("")
-    sys.exit(0)
-scripts = data.get("scripts") or {}
-print((scripts.get("start") or "").strip())
+else:
+    scripts = data.get("scripts") or {}
+    print((scripts.get("start") or "").strip())
 PY
+      )
       start_cmd=$(printf "%s" "$start_cmd" | tr -d '\r\n')
       if [ -n "$start_cmd" ]; then
         printf "PORT=%s npm start" "$port"
@@ -108,7 +109,11 @@ PY
 install_deps_if_any() {
   dir="$1"; name="$2"
   venv="/opt/venv-${name}"
-  npm_flags="${NPM_INSTALL_OPTIONS:---omit=dev --no-audit --no-fund}"
+  if [ -n "${NPM_INSTALL_OPTIONS:-}" ]; then
+    npm_flags="$NPM_INSTALL_OPTIONS"
+  else
+    npm_flags="--omit=dev --no-audit --no-fund"
+  fi
 
   if [ -f "$dir/requirements.txt" ] || [ -f "$dir/pyproject.toml" ] || [ -f "$dir/setup.py" ]; then
     if python3 -m venv "$venv" >/dev/null 2>&1; then
