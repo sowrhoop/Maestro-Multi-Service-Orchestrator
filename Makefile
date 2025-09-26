@@ -36,7 +36,7 @@ buildx:
 	docker buildx build $(BUILD_OUTPUT) --platform $(PLATFORMS) -t $(IMAGE) $(BUILD_ARGS) .
 
 push:
-	@if [ -z "$(REGISTRY)" ]; then echo "Set REGISTRY, e.g. REGISTRY=ghcr.io/<owner>"; exit 1; fi
+	@if [ -z "$(REGISTRY)" ]; then echo "Set REGISTRY, e.g. REGISTRY=docker.io/<namespace>"; exit 1; fi
 	docker tag $(IMAGE) $(REGISTRY)/$(IMAGE):latest
 	docker push $(REGISTRY)/$(IMAGE):latest
 

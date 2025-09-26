@@ -19,7 +19,7 @@ Maestro is a production-grade container blueprint for running two or more applic
 - `scripts/list-services.sh`: single command inventory in table or JSON form.
 - `scripts/remove-service.sh`: removes services cleanly with optional purge/user deletion modes.
 - `healthcheck.sh`: probes configured ports (`HEALTHCHECK_PORTS` override) or falls back to Supervisor status.
-- `.github/workflows/build.yml`: GitHub Actions workflow for building and pushing the image to GHCR.
+- `.github/workflows/build.yml`: GitHub Actions workflow for building and pushing the image to Docker Hub.
 
 ## Quickstart
 
@@ -38,7 +38,7 @@ make build IMAGE=maestro-orchestrator \
   SERVICE_B_REPO=https://github.com/<owner>/service-b.git
 
 # buildx multi-architecture build (set PUSH=true to push instead of load)
-make buildx PUSH=true IMAGE=ghcr.io/<owner>/maestro-orchestrator \
+make buildx PUSH=true IMAGE=docker.io/<namespace>/maestro-orchestrator \
   PLATFORMS=linux/amd64,linux/arm64
 ```
 
@@ -148,10 +148,11 @@ Notes:
 - Service failed to start: confirm the directory contains code, or force-enable via `SERVICE_A_ENABLED=true`. Use `DEFAULT_SERVICES_MODE=always` for the legacy static-server behaviour.
 - Permission denied on volume: ensure ownership or use bind mounts with proper UID/GID mapping.
 
-## CI / GHCR Workflow
+## CI / Docker Hub Workflow
 - Workflow builds on pushes to `main` and tags `vX.Y.Z`.
 - Manual runs (`workflow_dispatch`) accept overrides for service repos/refs/install commands.
-- Images push to `ghcr.io/<owner>/maestro-orchestrator` (`latest`, commit SHA, and semantic tags when available).
+- Set `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` repository secrets for workflow pushes; optionally define a `DOCKERHUB_NAMESPACE` repository variable to override the default (lowercased GitHub owner).
+- Images push to `docker.io/<namespace>/maestro-orchestrator` (`latest`, commit SHA, and semantic tags when available).
 
 ## Project Status
 - License: MIT
