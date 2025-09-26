@@ -21,7 +21,7 @@ while [ "$i" -le "$COUNT" ]; do
   echo -n "Ref (branch/tag/sha) [main]: "
   read REF; REF=${REF:-main}
   NAME=$(derive_name "$REPO")
-  echo -n "Name/id for this service [${NAME}]: "
+  echo -n "Name/id for this project [${NAME}]: "
   read NAME_IN; NAME=${NAME_IN:-$NAME}
   NAME=$(sanitize "$NAME")
   echo -n "Port to listen on (1-65535): "
@@ -29,9 +29,9 @@ while [ "$i" -le "$COUNT" ]; do
   case "$PORT" in ''|*[!0-9]*) echo "Invalid port" >&2; exit 1;; esac
   if [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then echo "Invalid port" >&2; exit 1; fi
 
-  USER="svc_${NAME}"
+  USER=$(derive_project_user "$NAME" "svc_${NAME}" "")
   ensure_user "$USER"
-  DEST="/opt/services/${NAME}"
+  DEST="/opt/projects/${NAME}"
   mkdir -p "$DEST"
   URL=$(codeload_url "$REPO" "$REF")
   fetch_tar_into_dir "$URL" "$DEST"
@@ -44,6 +44,8 @@ while [ "$i" -le "$COUNT" ]; do
 
   chown -R "$USER":"$USER" "$DEST" || true
   chmod -R 750 "$DEST" || true
+  printf '%s\n' "$NAME" >"${DEST}/.maestro-name" 2>/dev/null || true
+  chown "$USER":"$USER" "${DEST}/.maestro-name" 2>/dev/null || true
 
   write_program_conf "$NAME" "$DEST" "$CMD" "$USER"
 
@@ -55,4 +57,4 @@ supervisorctl reread >/dev/null 2>&1 || true
 supervisorctl update >/dev/null 2>&1 || true
 supervisorctl status || true
 
-echo "Done. Use 'supervisorctl' to manage services."
+echo "Done. Use 'supervisorctl' to manage projects."

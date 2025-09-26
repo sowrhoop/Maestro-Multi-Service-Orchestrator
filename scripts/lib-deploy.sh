@@ -1,5 +1,5 @@
 #!/usr/bin/env sh
-# Shared helpers for provisioning services under Supervisor
+# Shared helpers for provisioning projects under Supervisor
 set -eu
 
 SUPERVISOR_CONF_DIR=${SUPERVISOR_CONF_DIR:-/etc/supervisor/conf.d}
@@ -13,6 +13,43 @@ derive_name() {
   base=$(printf "%s" "$url" | sed -E 's#^https?://github.com/##; s#\.git$##; s#/$##')
   name=${base##*/}
   sanitize "$name"
+}
+
+derive_project_user() {
+  name="$1"
+  fallback="$2"
+  slot_hint="$3"
+
+  candidate=$(printf '%s' "$name" | tr '.-' '__')
+  candidate=$(printf '%s' "$candidate" | sed 's/[^a-z0-9_]//g')
+  candidate=$(printf '%.32s' "$candidate")
+
+  if [ -z "$candidate" ]; then
+    candidate="$fallback"
+  fi
+
+  case "$candidate" in
+    ''|[!a-z_]* )
+      prefix="svc"
+      if [ -n "$slot_hint" ]; then
+        prefix="${prefix}_${slot_hint}"
+      fi
+      candidate="${prefix}_${candidate}"
+      candidate=$(printf '%s' "$candidate" | sed 's/[^a-z0-9_]//g')
+      candidate=$(printf '%.32s' "$candidate")
+      ;;
+  esac
+
+  case "$candidate" in
+    [a-z_][a-z0-9_]* ) : ;;
+    *) candidate="$fallback" ;;
+  esac
+
+  if [ -z "$candidate" ]; then
+    candidate="$fallback"
+  fi
+
+  printf '%s' "$candidate"
 }
 
 codeload_url() {

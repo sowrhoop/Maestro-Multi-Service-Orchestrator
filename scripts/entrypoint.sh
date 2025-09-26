@@ -87,7 +87,7 @@ prepare_user_home() {
   chown -R "$user":"$user" "$home" || true
 }
 
-prepare_service_dir() {
+prepare_project_dir() {
   dir="$1"; user="$2"
   mkdir -p "$dir"
   chown -R "$user":"$user" "$dir" || true
@@ -109,44 +109,7 @@ derive_tarball_name() {
   sanitize "$base"
 }
 
-derive_service_user() {
-  name="$1"
-  fallback="$2"
-  slot_hint="$3"
-
-  candidate=$(printf '%s' "$name" | tr '.-' '__')
-  candidate=$(printf '%s' "$candidate" | sed 's/[^a-z0-9_]//g')
-  candidate=$(printf '%.32s' "$candidate")
-
-  if [ -z "$candidate" ]; then
-    candidate="$fallback"
-  fi
-
-  case "$candidate" in
-    ''|[!a-z_]* )
-      prefix="svc"
-      if [ -n "$slot_hint" ]; then
-        prefix="${prefix}_${slot_hint}"
-      fi
-      candidate="${prefix}_${candidate}"
-      candidate=$(printf '%s' "$candidate" | sed 's/[^a-z0-9_]//g')
-      candidate=$(printf '%.32s' "$candidate")
-      ;;
-  esac
-
-  case "$candidate" in
-    [a-z_][a-z0-9_]* ) : ;;
-    *) candidate="$fallback" ;;
-  esac
-
-  if [ -z "$candidate" ]; then
-    candidate="$fallback"
-  fi
-
-  printf '%s' "$candidate"
-}
-
-# Resolve default services mode: auto|always|never
+# Resolve default projects mode: auto|always|never
 resolve_default_mode() {
   mode="${DEFAULT_SERVICES_MODE:-}"
   if [ -z "$mode" ]; then
@@ -165,22 +128,22 @@ resolve_default_mode() {
   esac
 }
 
-bootstrap_builtin_service() {
+bootstrap_builtin_project() {
   slot="$1"       # A or B
   default_program="$2"
-  default_service_dir="$3"
+  default_project_dir="$3"
   default_user="$4"
   default_port="$5"
   defaults_mode="$6"
 
-  service_root=$(dirname "$default_service_dir")
-  if [ "$service_root" = "$default_service_dir" ] || [ -z "$service_root" ]; then
-    service_root="/opt/services"
+  project_root=$(dirname "$default_project_dir")
+  if [ "$project_root" = "$default_project_dir" ] || [ -z "$project_root" ]; then
+    project_root="/opt/projects"
   fi
-  mkdir -p "$service_root"
+  mkdir -p "$project_root"
 
   program="$default_program"
-  service_dir="$default_service_dir"
+  project_dir="$default_project_dir"
 
   eval enabled_override="\${SERVICE_${slot}_ENABLED:-}"
   eval repo_url="\${SERVICE_${slot}_REPO:-}"
@@ -204,7 +167,7 @@ bootstrap_builtin_service() {
     [ -n "$identity" ] && identity_source="tarball"
   fi
 
-  stamp_path="${default_service_dir}/.maestro-name"
+  stamp_path="${default_project_dir}/.maestro-name"
   if [ -z "$identity" ] && [ -f "$stamp_path" ]; then
     stamp_value=$(head -n 1 "$stamp_path" 2>/dev/null || true)
     identity=$(sanitize "$stamp_value")
@@ -213,40 +176,40 @@ bootstrap_builtin_service() {
 
   if [ -n "$identity" ] && [ -n "$identity_source" ]; then
     program="$identity"
-    service_dir="${service_root}/${program}"
+    project_dir="${project_root}/${program}"
     lower_slot=$(to_lower "$slot")
-    if [ -e "$service_dir" ] && [ "$service_dir" != "$default_service_dir" ]; then
+    if [ -e "$project_dir" ] && [ "$project_dir" != "$default_project_dir" ]; then
       program="${program}-${lower_slot}"
-      service_dir="${service_root}/${program}"
-      if [ -e "$service_dir" ]; then
+      project_dir="${project_root}/${program}"
+      if [ -e "$project_dir" ]; then
         log_warn "${default_program}: resolved name collision for ${program}; falling back to legacy naming"
         program="$default_program"
-        service_dir="$default_service_dir"
+        project_dir="$default_project_dir"
         identity_source=""
       fi
     fi
     if [ -n "$identity_source" ]; then
-      log_debug "Slot ${slot}: derived service name '${program}' from ${identity_source}"
+      log_debug "Slot ${slot}: derived project name '${program}' from ${identity_source}"
     fi
   fi
 
   rm -f "${SUPERVISOR_CONF_DIR}/program-${default_program}.conf"
   rm -f "${SUPERVISOR_CONF_DIR}/program-${program}.conf"
 
-  if [ "$service_dir" != "$default_service_dir" ] && [ -d "$default_service_dir" ]; then
-    if [ ! -e "$service_dir" ]; then
-      mv "$default_service_dir" "$service_dir"
+  if [ "$project_dir" != "$default_project_dir" ] && [ -d "$default_project_dir" ]; then
+    if [ ! -e "$project_dir" ]; then
+      mv "$default_project_dir" "$project_dir"
     else
-      log_warn "${program}: target directory ${service_dir} already exists; using as-is"
+      log_warn "${program}: target directory ${project_dir} already exists; using as-is"
     fi
   fi
 
-  start_service=0
+  start_project=0
   force_empty_ok=0
 
   if [ -n "$enabled_override" ]; then
     if is_true "$enabled_override"; then
-      start_service=1
+      start_project=1
       force_empty_ok=1
     elif is_false "$enabled_override"; then
       log_info "${program}: disabled via SERVICE_${slot}_ENABLED=${enabled_override}"
@@ -256,84 +219,84 @@ bootstrap_builtin_service() {
     fi
   fi
 
-  if [ "$start_service" -eq 0 ]; then
+  if [ "$start_project" -eq 0 ]; then
     case "$defaults_mode" in
       never)
-        log_info "${program}: default services disabled (DEFAULT_SERVICES_MODE=never)"
+        log_info "${program}: default projects disabled (DEFAULT_SERVICES_MODE=never)"
         return 0
         ;;
       always)
-        start_service=1
+        start_project=1
         force_empty_ok=1
         ;;
       auto)
         if [ -n "$cmd_override" ] || [ -n "$repo_url" ] || [ -n "$tarball_url" ]; then
-          start_service=1
+          start_project=1
           [ -n "$cmd_override" ] && force_empty_ok=1
-        elif ! dir_empty "$service_dir"; then
-          start_service=1
+        elif ! dir_empty "$project_dir"; then
+          start_project=1
         fi
         ;;
       *)
-        start_service=0
+        start_project=0
         ;;
     esac
   fi
 
-  if [ "$start_service" -eq 0 ]; then
+  if [ "$start_project" -eq 0 ]; then
     log_info "${program}: nothing to run; skipping"
     return 0
   fi
 
   lower_slot=$(to_lower "$slot")
 
-  service_user="$default_user"
+  project_user="$default_user"
   if [ -n "$identity_source" ]; then
-    service_user=$(derive_service_user "$program" "$default_user" "$lower_slot")
+    project_user=$(derive_project_user "$program" "$default_user" "$lower_slot")
   fi
-  ensure_user "$service_user"
-  prepare_user_home "$service_user"
-  prepare_service_dir "$service_dir" "$service_user"
+  ensure_user "$project_user"
+  prepare_user_home "$project_user"
+  prepare_project_dir "$project_dir" "$project_user"
 
-  if dir_empty "$service_dir"; then
+  if dir_empty "$project_dir"; then
     if [ -n "$tarball_url" ]; then
       log_info "${program}: fetching tarball ${tarball_url}"
-      if ! fetch_tar_into_dir "$tarball_url" "$service_dir"; then
+      if ! fetch_tar_into_dir "$tarball_url" "$project_dir"; then
         log_warn "${program}: failed to fetch tarball"
       fi
     elif [ -n "$repo_url" ]; then
       archive_url=$(codeload_url "$repo_url" "$repo_ref")
       log_info "${program}: fetching ${repo_url}@${repo_ref}"
-      if ! fetch_tar_into_dir "$archive_url" "$service_dir"; then
+      if ! fetch_tar_into_dir "$archive_url" "$project_dir"; then
         log_warn "${program}: failed to fetch repository"
       fi
     fi
   fi
 
-  prepare_service_dir "$service_dir" "$service_user"
+  prepare_project_dir "$project_dir" "$project_user"
 
   eval resolved_port="\${SERVICE_${slot}_PORT:-$default_port}"
   validate_port "SERVICE_${slot}_PORT" "$resolved_port"
   export "SERVICE_${slot}_PORT=$resolved_port"
 
-  if printf '%s\n' "$program" >"${service_dir}/.maestro-name" 2>/dev/null; then
-    chown "$service_user":"$service_user" "${service_dir}/.maestro-name" 2>/dev/null || true
+  if printf '%s\n' "$program" >"${project_dir}/.maestro-name" 2>/dev/null; then
+    chown "$project_user":"$project_user" "${project_dir}/.maestro-name" 2>/dev/null || true
   fi
 
   command_value="$cmd_override"
   if [ -z "$command_value" ]; then
-    command_value=$(detect_default_cmd "$service_dir" "$resolved_port")
+    command_value=$(detect_default_cmd "$project_dir" "$resolved_port")
     if [ -z "$command_value" ]; then
-      command_value="python3 -m http.server ${resolved_port} --directory ${service_dir} --bind 0.0.0.0"
+      command_value="python3 -m http.server ${resolved_port} --directory ${project_dir} --bind 0.0.0.0"
     fi
   fi
 
-  if dir_empty "$service_dir" && [ "$force_empty_ok" -eq 0 ]; then
+  if dir_empty "$project_dir" && [ "$force_empty_ok" -eq 0 ]; then
     log_warn "${program}: directory still empty after preparation; not registering"
     return 0
   fi
 
-  if ! write_program_conf "$program" "$service_dir" "$command_value" "$service_user"; then
+  if ! write_program_conf "$program" "$project_dir" "$command_value" "$project_user"; then
     log_error "${program}: failed to write supervisor configuration"
     return 1
   fi
@@ -363,8 +326,8 @@ fi
 
 DEFAULT_SERVICES_MODE=$(resolve_default_mode)
 
-bootstrap_builtin_service "A" "project1" "/opt/services/service-a" "svc_a" "$SERVICE_A_PORT" "$DEFAULT_SERVICES_MODE"
-bootstrap_builtin_service "B" "project2" "/opt/services/service-b" "svc_b" "$SERVICE_B_PORT" "$DEFAULT_SERVICES_MODE"
+bootstrap_builtin_project "A" "project1" "/opt/projects/project-a" "svc_a" "$SERVICE_A_PORT" "$DEFAULT_SERVICES_MODE"
+bootstrap_builtin_project "B" "project2" "/opt/projects/project-b" "svc_b" "$SERVICE_B_PORT" "$DEFAULT_SERVICES_MODE"
 
 if [ -n "${SERVICES:-}" ] || [ -n "${SERVICES_COUNT:-}" ]; then
   if [ -x /usr/local/bin/deploy-from-env ]; then

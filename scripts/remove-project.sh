@@ -7,12 +7,12 @@ usage() {
   cat <<USAGE
 Usage: remove-service <name> [--conf-only] [--purge] [--delete-user] [--dry-run]
 
-Removes a Supervisor-managed service by program <name>.
+Removes a Supervisor-managed project by program <name>.
 
 Options:
   --conf-only   Remove Supervisor program and reload only (default)
-  --purge       Also remove source dir (/opt/services/<name>), venv (/opt/venv-<name>), and tmp/cache
-  --delete-user Delete the service's UNIX user (if it looks like svc_<name>) and its home
+  --purge       Also remove source dir (/opt/projects/<name>), venv (/opt/venv-<name>), and tmp/cache
+  --delete-user Delete the project's UNIX user (if it looks like svc_<name>) and its home
   --dry-run     Print actions without executing
 USAGE
 }
@@ -93,7 +93,7 @@ run "supervisorctl reread >/dev/null 2>&1 || true"
 run "supervisorctl update >/dev/null 2>&1 || true"
 
 if [ $PURGE -eq 1 ]; then
-  DIR_DEFAULT="/opt/services/${NAME}"
+  DIR_DEFAULT="/opt/projects/${NAME}"
   VENV_DIR="/opt/venv-${NAME}"
   TMP1="/tmp/${NAME}-tmp"; TMP2="/tmp/${NAME}-cache"
   echo "Purging files: $DIR_DEFAULT $DIR_FROM_CONF $VENV_DIR $TMP1 $TMP2"
@@ -105,7 +105,7 @@ if [ $DELUSER -eq 1 ]; then
   case "$U" in svc_*|${NAME}|svc_${NAME})
     echo "Deleting user: $U (and home)"
     run "userdel -r '$U' 2>/dev/null || true" ;;
-    *) echo "Refusing to delete non-service user '$U'" >&2 ;;
+    *) echo "Refusing to delete non-project user '$U'" >&2 ;;
   esac
 fi
 

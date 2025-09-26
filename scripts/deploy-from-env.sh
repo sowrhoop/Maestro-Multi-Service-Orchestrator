@@ -5,7 +5,7 @@ set -eu
 PREPARE_ONLY=0
 if [ "${1:-}" = "--prepare-only" ]; then PREPARE_ONLY=1; shift; fi
 
-# Parse SERVICE specs from env.
+# Parse project specs from env (environment variable names retain the legacy SERVICE prefix).
 # Supported forms:
 # - SERVICES="repo|port|ref|name|user|cmd; repo2|port2|..."
 # - SERVICES_COUNT=N with SVC_1_REPO, SVC_1_PORT, SVC_1_REF, SVC_1_NAME, SVC_1_USER, SVC_1_CMD ...
@@ -18,10 +18,11 @@ provision_one() {
 
   NAME=${NAME_IN:-$(derive_name "$REPO")}
   NAME=$(sanitize "$NAME")
-  USER=${USER_IN:-svc_${NAME}}
+  DEFAULT_USER="svc_${NAME}"
+  USER=${USER_IN:-$(derive_project_user "$NAME" "$DEFAULT_USER" "")}
   ensure_user "$USER"
 
-  DEST="/opt/services/${NAME}"
+  DEST="/opt/projects/${NAME}"
   mkdir -p "$DEST"
   URL=$(codeload_url "$REPO" "$REF")
   fetch_tar_into_dir "$URL" "$DEST"
@@ -30,6 +31,8 @@ provision_one() {
   CMD=${CMD_IN:-$(detect_default_cmd "$DEST" "$PORT")}
   chown -R "$USER":"$USER" "$DEST" || true
   chmod -R 750 "$DEST" || true
+  printf '%s\n' "$NAME" >"${DEST}/.maestro-name" 2>/dev/null || true
+  chown "$USER":"$USER" "${DEST}/.maestro-name" 2>/dev/null || true
   write_program_conf "$NAME" "$DEST" "$CMD" "$USER"
 }
 
@@ -63,4 +66,3 @@ if [ "$PREPARE_ONLY" -eq 0 ]; then
   supervisorctl update >/dev/null 2>&1 || true
   supervisorctl status || true
 fi
-
