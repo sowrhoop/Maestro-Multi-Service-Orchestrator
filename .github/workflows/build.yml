@@ -69,10 +69,12 @@ jobs:
         id: vars
         env:
           VAR_NAMESPACE: ${{ vars.DOCKERHUB_NAMESPACE || '' }}
+          SECRET_NAMESPACE: ${{ secrets.DOCKERHUB_NAMESPACE || '' }}
+          SECRET_USERNAME: ${{ secrets.DOCKERHUB_USERNAME || '' }}
           INPUT_SUFFIX: ${{ github.event.inputs.image_suffix || '' }}
         run: |
           set -euo pipefail
-          namespace="${VAR_NAMESPACE:-${GITHUB_REPOSITORY_OWNER}}"
+          namespace="${VAR_NAMESPACE:-${SECRET_NAMESPACE:-${SECRET_USERNAME:-${GITHUB_REPOSITORY_OWNER}}}}"
           namespace="${namespace,,}"
           image_name="${DEFAULT_IMAGE_NAME}"
           if [ -n "${INPUT_SUFFIX}" ]; then

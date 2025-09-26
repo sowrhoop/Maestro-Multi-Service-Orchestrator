@@ -151,7 +151,7 @@ Notes:
 ## CI / Docker Hub Workflow
 - Workflow builds on pushes to `main` and tags `vX.Y.Z`.
 - Manual runs (`workflow_dispatch`) accept overrides for service repos/refs/install commands.
-- Set `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` repository secrets for workflow pushes; optionally define a `DOCKERHUB_NAMESPACE` repository variable to override the default (lowercased GitHub owner).
+- Set `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` repository secrets for workflow pushes; optionally define a `DOCKERHUB_NAMESPACE` repository variable (or secret) to override the default (lowercased GitHub owner or `DOCKERHUB_USERNAME`).
 - Images push to `docker.io/<namespace>/maestro-orchestrator` (`latest`, commit SHA, and semantic tags when available).
 
 ## Project Status
