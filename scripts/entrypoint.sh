@@ -94,6 +94,21 @@ prepare_service_dir() {
   chmod 750 "$dir" || true
 }
 
+derive_tarball_name() {
+  url="$1"
+  if [ -z "$url" ]; then
+    return 0
+  fi
+  trimmed=$(printf '%s' "$url" | sed 's/[?#].*$//')
+  trimmed=${trimmed%/}
+  base=${trimmed##*/}
+  if [ -z "$base" ]; then
+    return 0
+  fi
+  base=$(printf '%s' "$base" | sed -E 's/\.(tar\.gz|tar\.bz2|tar\.xz|tar\.zst|tgz|tbz2|txz|zip)$//')
+  sanitize "$base"
+}
+
 # Resolve default services mode: auto|always|never
 resolve_default_mode() {
   mode="${DEFAULT_SERVICES_MODE:-}"
@@ -115,20 +130,79 @@ resolve_default_mode() {
 
 bootstrap_builtin_service() {
   slot="$1"       # A or B
-  program="$2"    # supervisor program name (project1/project2)
-  service_dir="$3"
+  default_program="$2"
+  default_service_dir="$3"
   service_user="$4"
   default_port="$5"
   defaults_mode="$6"
 
-  conf_path="${SUPERVISOR_CONF_DIR}/program-${program}.conf"
-  rm -f "$conf_path"
+  service_root=$(dirname "$default_service_dir")
+  if [ "$service_root" = "$default_service_dir" ] || [ -z "$service_root" ]; then
+    service_root="/opt/services"
+  fi
+  mkdir -p "$service_root"
+
+  program="$default_program"
+  service_dir="$default_service_dir"
 
   eval enabled_override="\${SERVICE_${slot}_ENABLED:-}"
   eval repo_url="\${SERVICE_${slot}_REPO:-}"
   eval repo_ref="\${SERVICE_${slot}_REF:-main}"
   eval tarball_url="\${SERVICE_${slot}_TARBALL:-}"
   eval cmd_override="\${SERVICE_${slot}_CMD:-}"
+  eval name_override="\${SERVICE_${slot}_NAME:-}"
+
+  identity=""
+  identity_source=""
+  if [ -n "$name_override" ]; then
+    identity=$(sanitize "$name_override")
+    [ -n "$identity" ] && identity_source="override"
+  fi
+  if [ -z "$identity" ] && [ -n "$repo_url" ]; then
+    identity=$(derive_name "$repo_url" || true)
+    [ -n "$identity" ] && identity_source="repo"
+  fi
+  if [ -z "$identity" ] && [ -n "$tarball_url" ]; then
+    identity=$(derive_tarball_name "$tarball_url" || true)
+    [ -n "$identity" ] && identity_source="tarball"
+  fi
+
+  stamp_path="${default_service_dir}/.maestro-name"
+  if [ -z "$identity" ] && [ -f "$stamp_path" ]; then
+    stamp_value=$(head -n 1 "$stamp_path" 2>/dev/null || true)
+    identity=$(sanitize "$stamp_value")
+    [ -n "$identity" ] && identity_source="stamp"
+  fi
+
+  if [ -n "$identity" ] && [ -n "$identity_source" ]; then
+    program="$identity"
+    service_dir="${service_root}/${program}"
+    lower_slot=$(to_lower "$slot")
+    if [ -e "$service_dir" ] && [ "$service_dir" != "$default_service_dir" ]; then
+      program="${program}-${lower_slot}"
+      service_dir="${service_root}/${program}"
+      if [ -e "$service_dir" ]; then
+        log_warn "${default_program}: resolved name collision for ${program}; falling back to legacy naming"
+        program="$default_program"
+        service_dir="$default_service_dir"
+        identity_source=""
+      fi
+    fi
+    if [ -n "$identity_source" ]; then
+      log_debug "Slot ${slot}: derived service name '${program}' from ${identity_source}"
+    fi
+  fi
+
+  rm -f "${SUPERVISOR_CONF_DIR}/program-${default_program}.conf"
+  rm -f "${SUPERVISOR_CONF_DIR}/program-${program}.conf"
+
+  if [ "$service_dir" != "$default_service_dir" ] && [ -d "$default_service_dir" ]; then
+    if [ ! -e "$service_dir" ]; then
+      mv "$default_service_dir" "$service_dir"
+    else
+      log_warn "${program}: target directory ${service_dir} already exists; using as-is"
+    fi
+  fi
 
   start_service=0
   force_empty_ok=0
@@ -196,6 +270,10 @@ bootstrap_builtin_service() {
   eval resolved_port="\${SERVICE_${slot}_PORT:-$default_port}"
   validate_port "SERVICE_${slot}_PORT" "$resolved_port"
   export "SERVICE_${slot}_PORT=$resolved_port"
+
+  if printf '%s\n' "$program" >"${service_dir}/.maestro-name" 2>/dev/null; then
+    chown "$service_user":"$service_user" "${service_dir}/.maestro-name" 2>/dev/null || true
+  fi
 
   command_value="$cmd_override"
   if [ -z "$command_value" ]; then

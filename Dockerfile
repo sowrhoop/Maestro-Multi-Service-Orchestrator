@@ -77,6 +77,13 @@ RUN if [ -n "$SERVICE_A_SUBDIR" ] && [ -d "service-a/$SERVICE_A_SUBDIR" ]; then 
 # Strip VCS metadata from Service A
 RUN if [ -d "$SA_DIR/.git" ]; then rm -rf "$SA_DIR/.git"; fi
 
+# Record resolved service name for runtime derivation
+RUN if [ -d "$SA_DIR" ] && [ -n "$SERVICE_A_REPO" ]; then \
+      name="${SERVICE_A_REPO##*/}"; \
+      name="${name%.git}"; \
+      printf '%s\n' "$name" > "$SA_DIR/.maestro-name"; \
+    fi
+
 # Install dependencies for Service A
 RUN --mount=type=cache,target=/root/.cache/pip \
     set -eux; \
@@ -108,6 +115,13 @@ RUN if [ -n "$SERVICE_B_SUBDIR" ] && [ -d "service-b/$SERVICE_B_SUBDIR" ]; then 
 
 # Strip VCS metadata from Service B
 RUN if [ -d "$SB_DIR/.git" ]; then rm -rf "$SB_DIR/.git"; fi
+
+# Record resolved service name for runtime derivation
+RUN if [ -d "$SB_DIR" ] && [ -n "$SERVICE_B_REPO" ]; then \
+      name="${SERVICE_B_REPO##*/}"; \
+      name="${name%.git}"; \
+      printf '%s\n' "$name" > "$SB_DIR/.maestro-name"; \
+    fi
 
 # Install dependencies for Service B (Node: pnpm/yarn/npm autodetect)
 ENV NODE_ENV=production

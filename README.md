@@ -20,6 +20,7 @@ Maestro is a production-grade container blueprint for running two or more applic
 - `scripts/remove-service.sh`: removes services cleanly with optional purge/user deletion modes.
 - `healthcheck.sh`: probes configured ports (`HEALTHCHECK_PORTS` override) or falls back to Supervisor status.
 - `.github/workflows/build.yml`: GitHub Actions workflow for building and pushing the image to Docker Hub.
+- `/opt/services/<name>`: runtime directories for each provisioned service (legacy slots resolve `<name>` from repo/tarball metadata or fall back to `project1`/`project2`).
 
 ## Quickstart
 
@@ -62,11 +63,11 @@ docker run -d --name maestro \
   maestro-orchestrator
 ```
 
-Supervisor program names remain `project1` and `project2` for compatibility:
+Supervisor program names track the derived service names (sanitized repo/tarball names, or `project1`/`project2` when none are supplied):
 ```sh
 docker exec -it maestro supervisorctl status
-docker exec -it maestro supervisorctl restart project1
-docker exec -it maestro supervisorctl tail -f project2
+docker exec -it maestro supervisorctl restart project1   # replace with the derived name shown above
+docker exec -it maestro supervisorctl tail -f project2   # likewise
 ```
 
 ### Runtime source fetch (no rebuild)
@@ -90,6 +91,7 @@ The entrypoint downloads tarballs via `codeload.github.com` when `/opt/services/
 - `SERVICE_A_PORT`, `SERVICE_B_PORT`: default 8080/9090; must differ. Ports are validated at runtime.
 - `SERVICE_A_CMD`, `SERVICE_B_CMD`: override launch command. If unset Maestro inspects the directory (Python manifests → `uvicorn app:app`; Node projects → `node server.js` or `npm start`; fallback static server).
 - `SERVICE_A_TARBALL`, `SERVICE_B_TARBALL`: provide a direct tarball URL instead of a Git repo.
+- `SERVICE_A_NAME`, `SERVICE_B_NAME`: optional explicit names for the legacy slots. When omitted, Maestro derives the name from the repo/tarball URL and places the code under `/opt/services/<name>`; the same name is used for the Supervisor program ID.
 
 ### Entrypoint & Supervisor Controls
 - `ENTRYPOINT_LOG_LEVEL`: adjust runtime verbosity (`debug`, `info`, `warn`, `error`; default `info`).
