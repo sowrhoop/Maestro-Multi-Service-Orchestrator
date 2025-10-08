@@ -83,6 +83,22 @@ docker run -d --name maestro \
 ```
 The entrypoint downloads tarballs via `codeload.github.com` when `/opt/projects/project-{a,b}` are empty.
 
+## Infrastructure as Code (Terraform)
+
+For teams that prefer a fully automated workflow (or stakeholders who want to avoid hand-written Docker commands), an Infrastructure as Code path is available under `iac/`.
+
+### One-Command Setup
+```sh
+./iac/provision.sh
+```
+- The helper checks for Docker and Terraform, prompts you for any missing inputs (container name, optional repo URLs, and host ports), writes `iac/terraform/generated.auto.tfvars`, then runs `terraform init` + `apply`.
+- Outputs (container ID, published ports, etc.) are echoed at the end so you can copy/paste them into status updates.
+- See `iac/README.md` if you prefer a short standalone guide you can hand to non-engineering stakeholders.
+
+### Optional: Run Terraform Manually
+- All Terraform sources live in `iac/terraform`. If you prefer to drive Terraform yourself, copy `terraform.tfvars.example`, edit as needed, and run the standard `terraform init/plan/apply` workflow there.
+- To dismantle the environment, run either `./iac/provision.sh destroy` or `terraform destroy` from `iac/terraform`.
+
 ## Configuration Reference
 
 ### Default Project Slots

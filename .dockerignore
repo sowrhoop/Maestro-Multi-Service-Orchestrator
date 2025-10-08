@@ -38,3 +38,6 @@ coverage/
 docker-compose.override.yml
 
 tmp-check/
+
+# IaC configs
+iac/

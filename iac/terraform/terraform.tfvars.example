@@ -1,0 +1,28 @@
+# Maestro IaC defaults
+image_name     = "maestro-orchestrator"
+image_tag      = "iac"
+container_name = "maestro"
+
+service_a_repo = "https://github.com/example/project-a.git"
+service_a_ref  = "main"
+
+service_b_repo = "https://github.com/example/project-b.git"
+service_b_ref  = "main"
+
+ports = [
+  {
+    internal = 8080
+    external = 18080
+    protocol = "tcp"
+  },
+  {
+    internal = 9090
+    external = 19090
+    protocol = "tcp"
+  }
+]
+
+container_env = {
+  DEFAULT_SERVICES_MODE = "auto"
+  ENTRYPOINT_LOG_LEVEL  = "info"
+}
