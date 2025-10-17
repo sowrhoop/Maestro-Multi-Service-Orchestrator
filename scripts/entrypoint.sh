@@ -302,6 +302,8 @@ bootstrap_builtin_project() {
     return 1
   fi
 
+  register_service_port "$program" "$resolved_port"
+
   REGISTERED_PROGRAMS="${REGISTERED_PROGRAMS} ${program}"
   log_info "${program}: registered command '${command_value}' on port ${resolved_port}"
   return 0
@@ -311,6 +313,13 @@ SUPERVISOR_CONF_DIR=${SUPERVISOR_CONF_DIR:-/etc/supervisor/conf.d}
 mkdir -p "$SUPERVISOR_CONF_DIR"
 mkdir -p /tmp/supervisor && chmod 700 /tmp/supervisor || true
 log_debug "Supervisor configuration directory: ${SUPERVISOR_CONF_DIR}"
+
+MAESTRO_RUNTIME_DIR=${MAESTRO_RUNTIME_DIR:-/run/maestro}
+MAESTRO_PORT_LEDGER=${MAESTRO_PORT_LEDGER:-${MAESTRO_RUNTIME_DIR}/ports.csv}
+export MAESTRO_RUNTIME_DIR MAESTRO_PORT_LEDGER
+mkdir -p "$MAESTRO_RUNTIME_DIR" && chmod 700 "$MAESTRO_RUNTIME_DIR" || true
+rm -f "$MAESTRO_PORT_LEDGER" 2>/dev/null || true
+ensure_port_ledger
 
 REGISTERED_PROGRAMS=""
 
@@ -336,6 +345,8 @@ if [ -n "${SERVICES:-}" ] || [ -n "${SERVICES_COUNT:-}" ]; then
     /usr/local/bin/deploy-from-env --prepare-only || true
   fi
 fi
+
+apply_firewall_rules || true
 
 program_conf_glob=$(find "$SUPERVISOR_CONF_DIR" -maxdepth 1 -name 'program-*.conf' 2>/dev/null)
 program_count=$(printf '%s\n' "$program_conf_glob" | awk 'NF{c++} END{printf (c ? c : 0)}')

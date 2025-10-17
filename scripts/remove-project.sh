@@ -1,6 +1,8 @@
 #!/usr/bin/env sh
 set -eu
 
+. /usr/local/lib/deploy/lib-deploy.sh
+
 SUPERVISOR_CONF_DIR=${SUPERVISOR_CONF_DIR:-/etc/supervisor/conf.d}
 
 usage() {
@@ -108,5 +110,8 @@ if [ $DELUSER -eq 1 ]; then
     *) echo "Refusing to delete non-project user '$U'" >&2 ;;
   esac
 fi
+
+remove_service_port "$NAME" || true
+apply_firewall_rules || true
 
 echo "Done. Current programs:" && supervisorctl status || true

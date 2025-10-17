@@ -34,6 +34,8 @@ provision_one() {
   printf '%s\n' "$NAME" >"${DEST}/.maestro-name" 2>/dev/null || true
   chown "$USER":"$USER" "${DEST}/.maestro-name" 2>/dev/null || true
   write_program_conf "$NAME" "$DEST" "$CMD" "$USER"
+  register_service_port "$NAME" "$PORT"
+  apply_firewall_rules || true
 }
 
 if [ -n "${SERVICES:-}" ]; then

@@ -47,7 +47,7 @@ RUN --mount=type=cache,target=/var/cache/apt --mount=type=cache,target=/var/lib/
     nodejs npm \
     supervisor \
     git \
-    bubblewrap uidmap unzip \
+    bubblewrap uidmap unzip iptables iproute2 \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /opt/projects

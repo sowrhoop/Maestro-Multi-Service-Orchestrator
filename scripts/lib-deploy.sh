@@ -3,6 +3,8 @@
 set -eu
 
 SUPERVISOR_CONF_DIR=${SUPERVISOR_CONF_DIR:-/etc/supervisor/conf.d}
+PORT_LEDGER=${MAESTRO_PORT_LEDGER:-/run/maestro/ports.csv}
+IPTABLES_CMD=${MAESTRO_IPTABLES_BIN:-iptables}
 
 sanitize() {
   printf "%s" "$1" | tr '[:upper:] ' '[:lower:]-' | sed 's/[^a-z0-9._-]//g'
@@ -74,6 +76,104 @@ program_paths() {
   PROGRAM_TMP_DIR="${base}/tmp/${name}"
   PROGRAM_CACHE_DIR="${base}/cache/${name}"
   PROGRAM_VENV_DIR="${base}/venvs/${name}"
+}
+
+ensure_port_ledger() {
+  ledger="$PORT_LEDGER"
+  if [ -z "$ledger" ]; then
+    return 0
+  fi
+  case "$ledger" in
+    */*)
+      ledger_dir=${ledger%/*}
+      ;;
+    *)
+      ledger_dir="."
+      ;;
+  esac
+  if [ -n "$ledger_dir" ] && [ "$ledger_dir" != "$ledger" ]; then
+    mkdir -p "$ledger_dir" 2>/dev/null || true
+    chmod 700 "$ledger_dir" 2>/dev/null || true
+  fi
+  if [ ! -f "$ledger" ]; then
+    touch "$ledger" 2>/dev/null || true
+    chmod 600 "$ledger" 2>/dev/null || true
+  fi
+}
+
+register_service_port() {
+  name="$1"
+  port="$2"
+  case "$port" in
+    ''|*[!0-9]*)
+      return 0
+      ;;
+  esac
+  ensure_port_ledger
+  ledger="$PORT_LEDGER"
+  tmp="${ledger}.tmp.$$"
+  if ! tmp=$(mktemp "${ledger}.XXXXXX" 2>/dev/null); then
+    return 0
+  fi
+  if [ -f "$ledger" ]; then
+    awk -F'|' -v key="$name" 'NF>=2 && $1 != key {print $0}' "$ledger" >"$tmp"
+  fi
+  printf '%s|%s\n' "$name" "$port" >>"$tmp"
+  mv "$tmp" "$ledger"
+  chmod 600 "$ledger" 2>/dev/null || true
+}
+
+remove_service_port() {
+  name="$1"
+  ledger="$PORT_LEDGER"
+  [ -f "$ledger" ] || return 0
+  if ! tmp=$(mktemp "${ledger}.XXXXXX" 2>/dev/null); then
+    return 0
+  fi
+  awk -F'|' -v key="$name" 'NF>=2 && $1 != key {print $0}' "$ledger" >"$tmp"
+  mv "$tmp" "$ledger"
+  chmod 600 "$ledger" 2>/dev/null || true
+}
+
+list_registered_ports() {
+  ledger="$PORT_LEDGER"
+  [ -f "$ledger" ] || return 0
+  awk -F'|' 'NF>=2 && $2 ~ /^[0-9]+$/ {print $2}' "$ledger" | sort -n | uniq
+}
+
+apply_firewall_rules() {
+  if [ "${MAESTRO_FIREWALL_DISABLE:-0}" = "1" ]; then
+    return 0
+  fi
+  if ! command -v "$IPTABLES_CMD" >/dev/null 2>&1; then
+    printf '%s\n' "maestro: ${IPTABLES_CMD} not available; skipping firewall rule update" >&2
+    return 0
+  fi
+  ensure_port_ledger
+
+  chain="MAESTRO_INPUT"
+  cmd="$IPTABLES_CMD -w"
+  if ! $cmd -L "$chain" >/dev/null 2>&1; then
+    if ! $cmd -N "$chain" >/dev/null 2>&1; then
+      printf '%s\n' "maestro: unable to create ${chain} chain with ${IPTABLES_CMD}" >&2
+      return 0
+    fi
+  fi
+  if ! $cmd -F "$chain" >/dev/null 2>&1; then
+    printf '%s\n' "maestro: unable to flush ${chain} chain; firewall rules unchanged" >&2
+    return 0
+  fi
+  $cmd -A "$chain" -i lo -j ACCEPT >/dev/null 2>&1 || true
+  $cmd -A "$chain" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT >/dev/null 2>&1 || true
+  ports=$(list_registered_ports || true)
+  for port in $ports; do
+    $cmd -A "$chain" -p tcp --dport "$port" -j ACCEPT >/dev/null 2>&1 || true
+    $cmd -A "$chain" -p udp --dport "$port" -j ACCEPT >/dev/null 2>&1 || true
+  done
+  $cmd -A "$chain" -j DROP >/dev/null 2>&1 || true
+  if ! $cmd -C INPUT -j "$chain" >/dev/null 2>&1; then
+    $cmd -I INPUT 1 -j "$chain" >/dev/null 2>&1 || true
+  fi
 }
 
 ensure_program_dirs() {
@@ -302,6 +402,21 @@ write_program_conf() {
   if [ -n "$path_prefix" ]; then
     env_line="${env_line},PATH=\"$(escape_env_value "${path_prefix}:\$PATH")\""
   fi
+
+  append_env() {
+    key="$1"; value="$2"
+    if [ -n "$value" ]; then
+      env_line="${env_line},${key}=\"$(escape_env_value "$value")\""
+    fi
+  }
+
+  append_env MAESTRO_SANDBOX_MEMORY "${MAESTRO_SANDBOX_MEMORY:-}"
+  append_env MAESTRO_SANDBOX_CPU_QUOTA_US "${MAESTRO_SANDBOX_CPU_QUOTA_US:-}"
+  append_env MAESTRO_SANDBOX_CPU_PERIOD_US "${MAESTRO_SANDBOX_CPU_PERIOD_US:-}"
+  append_env MAESTRO_SANDBOX_PIDS_MAX "${MAESTRO_SANDBOX_PIDS_MAX:-}"
+  append_env MAESTRO_SANDBOX_NET_POLICY "${MAESTRO_SANDBOX_NET_POLICY:-}"
+  append_env MAESTRO_SANDBOX_NET_ALLOW_FILE "${MAESTRO_SANDBOX_NET_ALLOW_FILE:-}"
+  append_env MAESTRO_CGROUP_ROOT "${MAESTRO_CGROUP_ROOT:-}"
 
   cat >"${SUPERVISOR_CONF_DIR}/program-${name}.conf" <<EOF
 [program:${name}]

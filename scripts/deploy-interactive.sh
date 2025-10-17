@@ -48,6 +48,8 @@ while [ "$i" -le "$COUNT" ]; do
   chown "$USER":"$USER" "${DEST}/.maestro-name" 2>/dev/null || true
 
   write_program_conf "$NAME" "$DEST" "$CMD" "$USER"
+  register_service_port "$NAME" "$PORT"
+  apply_firewall_rules || true
 
   i=$((i+1))
 done
