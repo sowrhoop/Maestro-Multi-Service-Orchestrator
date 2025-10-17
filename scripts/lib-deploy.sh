@@ -288,6 +288,35 @@ ensure_program_dirs() {
 
   local failed=0
 
+  local base_root base_runtime base_tmp base_cache base_venvs owner
+
+  base_root="${PROGRAM_USER_HOME}/.maestro"
+  base_runtime="${base_root}/runtime"
+  base_tmp="${base_root}/tmp"
+  base_cache="${base_root}/cache"
+  base_venvs="${base_root}/venvs"
+
+  for dir in "$base_root" "$base_runtime" "$base_tmp" "$base_cache" "$base_venvs"; do
+    mkdir -p "$dir"
+    if ! chown "$user":"$user" "$dir" 2>/dev/null; then
+      failed=1
+    else
+      if ! owner=$(stat -c '%u' "$dir" 2>/dev/null); then
+        failed=1
+      elif [ "$owner" != "$(id -u "$user" 2>/dev/null)" ]; then
+        failed=1
+      fi
+    fi
+    case "$dir" in
+      "$base_tmp"|"$base_cache")
+        chmod 700 "$dir" 2>/dev/null || true
+        ;;
+      *)
+        chmod 750 "$dir" 2>/dev/null || true
+        ;;
+    esac
+  done
+
   for dir in "$PROGRAM_RUNTIME_DIR" "$PROGRAM_TMP_DIR" "$PROGRAM_CACHE_DIR" "$PROGRAM_VENV_DIR"; do
     mkdir -p "$dir"
     if ! chown "$user":"$user" "$dir" 2>/dev/null; then
