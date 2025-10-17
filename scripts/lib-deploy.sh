@@ -311,6 +311,12 @@ ensure_program_dirs() {
     chmod 700 "${PROGRAM_CACHE_DIR}/${sub}" 2>/dev/null || true
   done
 
+  if [ "$failed" -eq 0 ] && command -v runuser >/dev/null 2>&1; then
+    if ! runuser -u "$user" -- test -w "$PROGRAM_TMP_DIR" 2>/dev/null; then
+      failed=1
+    fi
+  fi
+
   if [ "$failed" -eq 0 ]; then
     return 0
   fi
@@ -319,6 +325,7 @@ ensure_program_dirs() {
   fallback_root="${MAESTRO_RUNTIME_FALLBACK_BASE:-/tmp/maestro-fallback}"
   [ -n "$fallback_root" ] || fallback_root="/tmp/maestro-fallback"
   fallback_home="${fallback_root}/${user:-root}"
+  echo "ensure_program_dirs: using fallback workspace ${fallback_home}" >&2
   program_paths "$name" "$user" "$fallback_home"
   mkdir -p "$fallback_home" 2>/dev/null || true
   chmod 755 "$fallback_home" 2>/dev/null || true
