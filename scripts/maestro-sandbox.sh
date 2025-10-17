@@ -165,30 +165,36 @@ case "$net_policy" in
       if [[ "$owner" != "0" ]]; then
         echo "maestro-sandbox: net allow file must be owned by root; enforcing deny" >&2
         net_policy="deny"
-      elif [[ "${perms: -1}" != "0" || "${perms:1:1}" != "0" ]]; then
-        echo "maestro-sandbox: net allow file must not be group/world writable; enforcing deny" >&2
-        net_policy="deny"
       else
-        allow_flag=$(awk 'BEGIN{f=0} /^[[:space:]]*#/ {next} /^[[:space:]]*ALLOW_HOST_NETWORK=1([[:space:]]|$)/ {f=1} END{print f}' "$net_allow_file" 2>/dev/null)
-        if [[ "$allow_flag" != "1" ]]; then
-          echo "maestro-sandbox: net allow file does not enable host network; enforcing deny" >&2
+        group_digit="${perms: -2:1}"
+        other_digit="${perms: -1}"
+        if [[ "$group_digit" =~ [2367] || "$other_digit" =~ [2367] ]]; then
+          echo "maestro-sandbox: net allow file must not be group/world writable; enforcing deny" >&2
           net_policy="deny"
         else
-          allowed_hosts=$(awk 'BEGIN{first=1}
-            /^[[:space:]]*#/ {next}
-            /^[[:space:]]*$/ {next}
-            /^[[:space:]]*ALLOW_HOST_NETWORK=1/ {next}
-            {
-              gsub(/^[[:space:]]+|[[:space:]]+$/, "", $0);
-              if ($0 != "") {
-                if (first) { printf "%s", $0; first=0 }
-                else { printf ",%s", $0 }
-              }
-            }' "$net_allow_file" 2>/dev/null)
-          if [[ -z "$allowed_hosts" ]]; then
-            allowed_hosts="*"
+          allow_flag=$(awk 'BEGIN{f=0} /^[[:space:]]*#/ {next} /^[[:space:]]*ALLOW_HOST_NETWORK=1([[:space:]]|$)/ {f=1} END{print f}' "$net_allow_file" 2>/dev/null)
+          if [[ "$allow_flag" != "1" ]]; then
+            echo "maestro-sandbox: net allow file does not enable host network; enforcing deny" >&2
+            net_policy="deny"
+          else
+            allowed_hosts=$(awk 'BEGIN{first=1}
+              /^[[:space:]]*#/ {next}
+              /^[[:space:]]*$/ {next}
+              /^[[:space:]]*ALLOW_HOST_NETWORK=1/ {next}
+              {
+                gsub(/^[[:space:]]+|[[:space:]]+$/, "", $0);
+                if ($0 != "") {
+                  if (first) { printf "%s", $0; first=0 }
+                  else { printf ",%s", $0 }
+                }
+              }' "$net_allow_file" 2>/dev/null)
+            if [[ -z "$allowed_hosts" ]]; then
+              allowed_hosts="*"
+            fi
           fi
         fi
+      else
+        :
       fi
     fi
     ;;
