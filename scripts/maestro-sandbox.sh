@@ -10,6 +10,15 @@ per-project writable areas, offline network namespace, and resource limits.
 EOF
 }
 
+log_warn() {
+  printf 'maestro-sandbox: %s\n' "$*" >&2
+}
+
+to_lower() {
+  local input="${1:-}"
+  printf '%s' "$input" | tr '[:upper:]' '[:lower:]'
+}
+
 to_bytes() {
   local input="${1:-}"
   if [[ -z "$input" ]]; then
@@ -96,6 +105,112 @@ cleanup_cgroup() {
   fi
 }
 
+validate_net_allow_file() {
+  local path="$1"
+  allowed_hosts=""
+  if [[ -z "$path" ]]; then
+    log_warn "net policy 'allow' ignored (empty allow file path)"
+    return 1
+  fi
+  if [[ ! -e "$path" ]]; then
+    log_warn "net policy 'allow' ignored (no allow file at ${path})"
+    return 1
+  fi
+  if [[ ! -r "$path" ]]; then
+    log_warn "net allow file ${path} is not readable, enforcing deny"
+    return 1
+  fi
+
+  local owner perms
+  if ! owner=$(stat -c '%u' "$path" 2>/dev/null); then
+    log_warn "unable to stat ${path}; enforcing deny"
+    return 1
+  fi
+  if [[ "$owner" != "0" ]]; then
+    log_warn "net allow file must be owned by root; enforcing deny"
+    return 1
+  fi
+
+  if ! perms=$(stat -c '%a' "$path" 2>/dev/null); then
+    log_warn "unable to determine permissions for ${path}; enforcing deny"
+    return 1
+  fi
+  local len=${#perms}
+  local group_digit="0"
+  if (( len >= 2 )); then
+    group_digit="${perms:len-2:1}"
+  fi
+  local other_digit="${perms:len-1:1}"
+
+  case "$group_digit" in
+    '') group_digit="0" ;;
+    [0-7]) ;;
+    *)
+      log_warn "unexpected permission mask '${perms}' for ${path}; enforcing deny"
+      return 1
+      ;;
+  esac
+  case "$other_digit" in
+    '') other_digit="0" ;;
+    [0-7]) ;;
+    *)
+      log_warn "unexpected permission mask '${perms}' for ${path}; enforcing deny"
+      return 1
+      ;;
+  esac
+
+  case "$group_digit" in
+    2|3|6|7)
+      log_warn "net allow file must not be group writable; enforcing deny"
+      return 1
+      ;;
+  esac
+  case "$other_digit" in
+    2|3|6|7)
+      log_warn "net allow file must not be world writable; enforcing deny"
+      return 1
+      ;;
+  esac
+
+  local allow_flag
+  if ! allow_flag=$(awk 'BEGIN {flag=0}
+    /^[[:space:]]*#/ {next}
+    /^[[:space:]]*$/ {next}
+    /^[[:space:]]*ALLOW_HOST_NETWORK=1([[:space:]]|$)/ {flag=1}
+    END {print flag}' "$path"); then
+    log_warn "unable to parse ${path}; enforcing deny"
+    return 1
+  fi
+  if [[ "$allow_flag" != "1" ]]; then
+    log_warn "net allow file does not enable host network; enforcing deny"
+    return 1
+  fi
+
+  local hosts
+  if ! hosts=$(awk 'BEGIN {first=1}
+    /^[[:space:]]*#/ {next}
+    /^[[:space:]]*$/ {next}
+    /^[[:space:]]*ALLOW_HOST_NETWORK=1([[:space:]]|$)/ {next}
+    {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", $0);
+      if ($0 != "") {
+        if (first) { printf "%s", $0; first=0 }
+        else { printf ",%s", $0 }
+      }
+    }' "$path"); then
+    log_warn "unable to read host allow list from ${path}; enforcing deny"
+    return 1
+  fi
+
+  if [[ -z "$hosts" ]]; then
+    allowed_hosts="*"
+  else
+    allowed_hosts="$hosts"
+  fi
+
+  return 0
+}
+
 workdir=""
 
 while [[ $# -gt 0 ]]; do
@@ -140,6 +255,8 @@ tmp_dir="${MAESTRO_SANDBOX_TMP:-${TMPDIR:-/tmp}}"
 cache_dir="${MAESTRO_SANDBOX_CACHE:-$tmp_dir/cache}"
 venv_dir="${MAESTRO_SANDBOX_VENV:-}"
 home_dir="${HOME:-/tmp}"
+readonly DEFAULT_SANDBOX_PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+sandbox_path="${PATH:-$DEFAULT_SANDBOX_PATH}"
 
 mkdir -p "$tmp_dir" "$cache_dir" >/dev/null 2>&1 || true
 mkdir -p "${cache_dir}/pip" "${cache_dir}/npm" "${cache_dir}/pnpm" "${cache_dir}/yarn" >/dev/null 2>&1 || true
@@ -151,58 +268,21 @@ if [[ -n "$project_dir" ]]; then
 fi
 mkdir -p "$home_dir" >/dev/null 2>&1 || true
 
-net_policy="${MAESTRO_SANDBOX_NET_POLICY:-deny}"
+net_policy_raw="${MAESTRO_SANDBOX_NET_POLICY:-deny}"
+net_policy=$(to_lower "$net_policy_raw")
 net_allow_file="${MAESTRO_SANDBOX_NET_ALLOW_FILE:-/etc/maestro/sandbox-net-allow}"
 allowed_hosts=""
 case "$net_policy" in
   allow)
-    if [[ ! -r "$net_allow_file" ]]; then
-      echo "maestro-sandbox: net policy 'allow' ignored (no allow file at ${net_allow_file})" >&2
+    if ! validate_net_allow_file "$net_allow_file"; then
       net_policy="deny"
-    else
-      perms=$(stat -c '%a' "$net_allow_file" 2>/dev/null || echo "")
-      owner=$(stat -c '%u' "$net_allow_file" 2>/dev/null || echo "")
-      if [[ "$owner" != "0" ]]; then
-        echo "maestro-sandbox: net allow file must be owned by root; enforcing deny" >&2
-        net_policy="deny"
-      else
-        group_digit="${perms: -2:1}"
-        other_digit="${perms: -1}"
-        if [[ "$group_digit" =~ [2367] || "$other_digit" =~ [2367] ]]; then
-          echo "maestro-sandbox: net allow file must not be group/world writable; enforcing deny" >&2
-          net_policy="deny"
-        else
-          allow_flag=$(awk 'BEGIN{f=0} /^[[:space:]]*#/ {next} /^[[:space:]]*ALLOW_HOST_NETWORK=1([[:space:]]|$)/ {f=1} END{print f}' "$net_allow_file" 2>/dev/null)
-          if [[ "$allow_flag" != "1" ]]; then
-            echo "maestro-sandbox: net allow file does not enable host network; enforcing deny" >&2
-            net_policy="deny"
-          else
-            allowed_hosts=$(awk 'BEGIN{first=1}
-              /^[[:space:]]*#/ {next}
-              /^[[:space:]]*$/ {next}
-              /^[[:space:]]*ALLOW_HOST_NETWORK=1/ {next}
-              {
-                gsub(/^[[:space:]]+|[[:space:]]+$/, "", $0);
-                if ($0 != "") {
-                  if (first) { printf "%s", $0; first=0 }
-                  else { printf ",%s", $0 }
-                }
-              }' "$net_allow_file" 2>/dev/null)
-            if [[ -z "$allowed_hosts" ]]; then
-              allowed_hosts="*"
-            fi
-          fi
-        fi
-      else
-        :
-      fi
     fi
     ;;
   deny|loopback|'')
     net_policy="deny"
     ;;
   *)
-    echo "maestro-sandbox: unknown MAESTRO_SANDBOX_NET_POLICY='${net_policy}', defaulting to deny" >&2
+    log_warn "unknown MAESTRO_SANDBOX_NET_POLICY='${net_policy_raw}' (using deny)"
     net_policy="deny"
     ;;
 esac
@@ -281,12 +361,12 @@ args+=(
   --setenv PNPM_HOME "${cache_dir}/pnpm"
   --setenv MAESTRO_SANDBOX 1
   --setenv MAESTRO_SANDBOX_NAME "$name"
-  --setenv PATH "${PATH:-/usr/bin}"
+  --setenv PATH "$sandbox_path"
 )
 
 if [[ -n "$venv_dir" ]]; then
   args+=(--setenv VIRTUAL_ENV "$venv_dir")
-  args+=(--setenv PATH "$venv_dir/bin:${PATH:-/usr/bin}")
+  args+=(--setenv PATH "$venv_dir/bin:$sandbox_path")
 fi
 
 if [[ -n "$allowed_hosts" ]]; then
