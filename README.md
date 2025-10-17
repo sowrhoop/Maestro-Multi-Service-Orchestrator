@@ -120,6 +120,13 @@ For teams that prefer a fully automated workflow (or stakeholders who want to av
 - `docker exec -it maestro list-services [--json]` — inventory active Supervisor programs with status and commands.
 - `docker exec -it maestro remove-service <name> [--purge] [--delete-user]` — unregisters a service and optionally purges its files; also available as `remove-project`.
 
+### Sandboxed command execution
+- Internal build/deploy helpers (`fetch_tar_into_dir`, `install_deps_if_any`, interactive deploy, etc.) execute within `maestro-sandbox`, a Bubblewrap-based jail that isolates PID/IPC namespaces, mounts a read-only system view, and constrains CPU/RAM/PIDs via cgroup v2 limits.
+- Network access defaults to **deny** (`MAESTRO_SANDBOX_NET_POLICY=deny`), meaning only loopback is reachable. Set `MAESTRO_SANDBOX_NET_POLICY=allow` when a command must reach the network.
+- Allow mode requires a root-owned, read-only policy file (`MAESTRO_SANDBOX_NET_ALLOW_FILE`, default `/etc/maestro/sandbox-net-allow`). The build ships this file with `ALLOW_HOST_NETWORK=1` and `0400` permissions; add additional host patterns (one per line) beneath the flag to restrict outbound destinations. If no hosts are listed, all outbound destinations are permitted once allow mode is active.
+- Override `MAESTRO_SANDBOX_NET_ALLOW_FILE` to point at your own policy file if you need to manage it externally; the same ownership/permission checks apply.
+- Resource ceilings are configurable via `MAESTRO_SANDBOX_MEMORY` (e.g., `512M` or `max`), `MAESTRO_SANDBOX_CPU_QUOTA_US` / `MAESTRO_SANDBOX_CPU_PERIOD_US`, and `MAESTRO_SANDBOX_PIDS_MAX`; see `scripts/maestro-sandbox.sh` for defaults.
+
 ## Security Hardening
 ```sh
 docker run -d --name maestro \

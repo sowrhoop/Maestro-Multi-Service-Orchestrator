@@ -47,6 +47,10 @@ COPY scripts/lib-deploy.sh /usr/local/lib/deploy/lib-deploy.sh
 COPY scripts/maestro-sandbox.sh /usr/local/bin/maestro-sandbox
 COPY scripts/fetch-and-extract.sh /usr/local/lib/deploy/fetch-and-extract.sh
 
+RUN install -d -m 755 /etc/maestro \
+ && printf '# Managed by Maestro build\nALLOW_HOST_NETWORK=1\n' >/etc/maestro/sandbox-net-allow \
+ && chmod 400 /etc/maestro/sandbox-net-allow
+
 RUN chmod +x /healthcheck.sh /entrypoint.sh \
  && chmod +x /usr/local/bin/deploy /usr/local/bin/deploy-from-env \
                /usr/local/bin/list-services \
