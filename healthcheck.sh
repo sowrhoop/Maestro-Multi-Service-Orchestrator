@@ -6,11 +6,12 @@ if [ -n "${HEALTHCHECK_PORTS:-}" ]; then
   PORT_LIST=$(printf '%s' "${HEALTHCHECK_PORTS}" | tr ',;' ' ')
 else
   PORT_LIST=""
-  if [ -f /etc/supervisor/conf.d/program-project1.conf ]; then
-    PORT_LIST="${PORT_LIST} ${SERVICE_A_PORT:-8080}"
-  fi
-  if [ -f /etc/supervisor/conf.d/program-project2.conf ]; then
-    PORT_LIST="${PORT_LIST} ${SERVICE_B_PORT:-9090}"
+  PORT_LEDGER=${MAESTRO_PORT_LEDGER:-/run/maestro/ports.csv}
+  if [ -f "$PORT_LEDGER" ]; then
+    ledger_ports=$(awk -F'|' 'NF>=2 && $2 ~ /^[0-9]+$/ {print $2}' "$PORT_LEDGER" 2>/dev/null | sort -n | uniq)
+    for p in $ledger_ports; do
+      PORT_LIST="${PORT_LIST} ${p}"
+    done
   fi
 fi
 

@@ -23,7 +23,7 @@ variable "build_target" {
 }
 
 variable "build_args" {
-  description = "Additional Docker build arguments (applied alongside the service_* variables when provided)."
+  description = "Additional Docker build arguments."
   type        = map(string)
   default     = {}
 }
@@ -142,18 +142,7 @@ variable "ports" {
     external = number
     protocol = optional(string, "tcp")
   }))
-  default = [
-    {
-      internal = 8080
-      external = 8080
-      protocol = "tcp"
-    },
-    {
-      internal = 9090
-      external = 9090
-      protocol = "tcp"
-    }
-  ]
+  default = []
 }
 
 variable "networks" {
@@ -171,28 +160,4 @@ variable "container_env" {
   description = "Additional environment variables passed to the container."
   type        = map(string)
   default     = {}
-}
-
-variable "service_a_repo" {
-  description = "Git repository for the legacy service slot A."
-  type        = string
-  default     = ""
-}
-
-variable "service_a_ref" {
-  description = "Git reference (branch, tag, or commit) for service slot A."
-  type        = string
-  default     = ""
-}
-
-variable "service_b_repo" {
-  description = "Git repository for the legacy service slot B."
-  type        = string
-  default     = ""
-}
-
-variable "service_b_ref" {
-  description = "Git reference (branch, tag, or commit) for service slot B."
-  type        = string
-  default     = ""
 }

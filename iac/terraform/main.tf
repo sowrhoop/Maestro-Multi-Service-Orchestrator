@@ -19,21 +19,14 @@ locals {
   build_context = var.build_context != "" ? var.build_context : local.project_root
   dockerfile    = var.dockerfile != "" ? var.dockerfile : "${local.project_root}/Dockerfile"
 
-  service_env = {
-    SERVICE_A_REPO = var.service_a_repo
-    SERVICE_A_REF  = var.service_a_ref
-    SERVICE_B_REPO = var.service_b_repo
-    SERVICE_B_REF  = var.service_b_ref
-  }
-
   build_args = {
-    for key, value in merge(local.service_env, var.build_args) :
+    for key, value in var.build_args :
     key => value
     if try(trim(value), "") != ""
   }
 
   runtime_env = {
-    for key, value in merge(local.service_env, var.container_env) :
+    for key, value in var.container_env :
     key => value
     if try(trim(value), "") != ""
   }

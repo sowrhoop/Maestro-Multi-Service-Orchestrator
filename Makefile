@@ -1,15 +1,7 @@
 IMAGE?=maestro-orchestrator
 PLATFORMS?=linux/amd64
 SMOKE_CONTAINER?=$(IMAGE)-smoke
-BUILD_ARGS=\
-	--build-arg SERVICE_A_REPO="$(SERVICE_A_REPO)" \
-	--build-arg SERVICE_A_REF="$(SERVICE_A_REF)" \
-	--build-arg SERVICE_A_SUBDIR="$(SERVICE_A_SUBDIR)" \
-	--build-arg SERVICE_A_INSTALL_CMD="$(SERVICE_A_INSTALL_CMD)" \
-	--build-arg SERVICE_B_REPO="$(SERVICE_B_REPO)" \
-	--build-arg SERVICE_B_REF="$(SERVICE_B_REF)" \
-	--build-arg SERVICE_B_SUBDIR="$(SERVICE_B_SUBDIR)" \
-	--build-arg SERVICE_B_INSTALL_CMD="$(SERVICE_B_INSTALL_CMD)"
+BUILD_ARGS?=
 
 PUSH?=false
 ifeq ($(PUSH),true)
@@ -17,15 +9,6 @@ ifeq ($(PUSH),true)
 else
 	BUILD_OUTPUT=--load
 endif
-
-SERVICE_A_REPO?=
-SERVICE_A_REF?=main
-SERVICE_A_SUBDIR?=
-SERVICE_A_INSTALL_CMD?=
-SERVICE_B_REPO?=
-SERVICE_B_REF?=main
-SERVICE_B_SUBDIR?=
-SERVICE_B_INSTALL_CMD?=
 
 .PHONY: build buildx push run shell clean tag release smoke test
 
@@ -45,9 +28,6 @@ run:
 		--read-only --cap-drop ALL --security-opt no-new-privileges \
 		--pids-limit 512 --memory 1g --cpus 1.0 \
 		--tmpfs /tmp:rw,noexec,nosuid,size=64m \
-		--tmpfs /home/svc_a:rw,nosuid,size=32m \
-		--tmpfs /home/svc_b:rw,nosuid,size=32m \
-		-p 8080:8080 -p 9090:9090 \
 		$(IMAGE)
 
 shell:
@@ -56,7 +36,7 @@ shell:
 smoke: build
 	-@docker rm -f $(SMOKE_CONTAINER) >/dev/null 2>&1 || true
 	docker run -d --name $(SMOKE_CONTAINER) \
-		-e DEFAULT_SERVICES_MODE=never \
+		-e MAESTRO_PRESEEDED_MODE=never \
 		$(IMAGE)
 	docker exec $(SMOKE_CONTAINER) pgrep -x supervisord >/dev/null || \
 		( docker logs $(SMOKE_CONTAINER) && docker rm -f $(SMOKE_CONTAINER) && exit 1 )

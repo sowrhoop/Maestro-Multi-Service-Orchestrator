@@ -24,10 +24,9 @@ while [ "$i" -le "$COUNT" ]; do
   echo -n "Name/id for this project [${NAME}]: "
   read NAME_IN; NAME=${NAME_IN:-$NAME}
   NAME=$(sanitize "$NAME")
-  echo -n "Port to listen on (1-65535): "
-  read PORT
-  case "$PORT" in ''|*[!0-9]*) echo "Invalid port" >&2; exit 1;; esac
-  if [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then echo "Invalid port" >&2; exit 1; fi
+  echo -n "Port to listen on (leave blank to auto-assign): "
+  read PORT_INPUT
+  RESOLVED_PORT=$(maestro_resolve_port "$PORT_INPUT") || { echo "Unable to allocate port" >&2; exit 1; }
 
   USER=$(derive_project_user "$NAME" "svc_${NAME}" "")
   ensure_user "$USER"
@@ -38,7 +37,7 @@ while [ "$i" -le "$COUNT" ]; do
 
   install_deps_if_any "$DEST" "$NAME" "$USER"
 
-  DEFAULT_CMD=$(detect_default_cmd "$DEST" "$PORT")
+  DEFAULT_CMD=$(detect_default_cmd "$DEST" "$RESOLVED_PORT")
   echo -n "Start command [${DEFAULT_CMD}]: "
   read CMD; CMD=${CMD:-$DEFAULT_CMD}
 
@@ -48,7 +47,7 @@ while [ "$i" -le "$COUNT" ]; do
   chown "$USER":"$USER" "${DEST}/.maestro-name" 2>/dev/null || true
 
   write_program_conf "$NAME" "$DEST" "$CMD" "$USER"
-  register_service_port "$NAME" "$PORT"
+  register_service_port "$NAME" "$RESOLVED_PORT"
   apply_firewall_rules || true
 
   i=$((i+1))

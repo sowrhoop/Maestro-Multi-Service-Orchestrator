@@ -5,16 +5,15 @@ set -eu
 PREPARE_ONLY=0
 if [ "${1:-}" = "--prepare-only" ]; then PREPARE_ONLY=1; shift; fi
 
-# Parse project specs from env (environment variable names retain the legacy SERVICE prefix).
+# Parse project specs from env.
 # Supported forms:
 # - SERVICES="repo|port|ref|name|user|cmd; repo2|port2|..."
+#   (set port blank to auto-select)
 # - SERVICES_COUNT=N with SVC_1_REPO, SVC_1_PORT, SVC_1_REF, SVC_1_NAME, SVC_1_USER, SVC_1_CMD ...
 
 provision_one() {
-  REPO="$1"; PORT="$2"; REF="${3:-main}"; NAME_IN="${4:-}"; USER_IN="${5:-}"; CMD_IN="${6:-}";
-  [ -z "$REPO" ] && { echo "Repo required" >&2; return 1; }
-  case "$PORT" in ''|*[!0-9]*) echo "Invalid port: $PORT" >&2; return 1;; esac
-  [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ] && { echo "Invalid port: $PORT" >&2; return 1; }
+  REPO="$1"; PORT_IN="$2"; REF="${3:-main}"; NAME_IN="${4:-}"; USER_IN="${5:-}"; CMD_IN="${6:-}";
+  [ -z "$REPO" ] && { echo "Repo/source required" >&2; return 1; }
 
   NAME=${NAME_IN:-$(derive_name "$REPO")}
   NAME=$(sanitize "$NAME")
@@ -28,13 +27,15 @@ provision_one() {
   fetch_tar_into_dir "$URL" "$DEST" "$USER" "$NAME"
   install_deps_if_any "$DEST" "$NAME" "$USER"
 
-  CMD=${CMD_IN:-$(detect_default_cmd "$DEST" "$PORT")}
+  RESOLVED_PORT=$(maestro_resolve_port "$PORT_IN") || { echo "Unable to allocate port for ${NAME}" >&2; return 1; }
+
+  CMD=${CMD_IN:-$(detect_default_cmd "$DEST" "$RESOLVED_PORT")}
   chown -R "$USER":"$USER" "$DEST" || true
   chmod -R 750 "$DEST" || true
   printf '%s\n' "$NAME" >"${DEST}/.maestro-name" 2>/dev/null || true
   chown "$USER":"$USER" "${DEST}/.maestro-name" 2>/dev/null || true
   write_program_conf "$NAME" "$DEST" "$CMD" "$USER"
-  register_service_port "$NAME" "$PORT"
+  register_service_port "$NAME" "$RESOLVED_PORT"
   apply_firewall_rules || true
 }
 

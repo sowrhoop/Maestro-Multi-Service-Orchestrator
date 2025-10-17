@@ -34,8 +34,8 @@ log_emit() {
 }
 
 log_debug() { log_emit debug "$@"; }
-log_info() { log_emit info "$@"; }
-log_warn() { log_emit warn "$@"; }
+log_info()  { log_emit info  "$@"; }
+log_warn()  { log_emit warn  "$@"; }
 log_error() { log_emit error "$@"; }
 
 trap 'status=$?; if [ $status -ne 0 ]; then log_error "Exiting with status $status"; fi' EXIT
@@ -65,20 +65,6 @@ dir_empty() {
   [ -z "$entries" ]
 }
 
-validate_port() {
-  name="$1"; value="$2"
-  case "$value" in
-    ''|*[!0-9]*)
-      log_error "${name} (${value}) must be an integer"
-      exit 1
-      ;;
-  esac
-  if [ "$value" -lt 1 ] || [ "$value" -gt 65535 ]; then
-    log_error "${name} (${value}) must be between 1 and 65535"
-    exit 1
-  fi
-}
-
 prepare_user_home() {
   user="$1"
   home="/home/$user"
@@ -90,210 +76,184 @@ prepare_user_home() {
 prepare_project_dir() {
   dir="$1"; user="$2"
   mkdir -p "$dir"
-  chown -R "$user":"$user" "$dir" || true
-  chmod 750 "$dir" || true
+  chown -R "$user":"$user" "$dir" 2>/dev/null || true
+  chmod 750 "$dir" 2>/dev/null || true
 }
 
-derive_tarball_name() {
-  url="$1"
-  if [ -z "$url" ]; then
-    return 0
-  fi
-  trimmed=$(printf '%s' "$url" | sed 's/[?#].*$//')
-  trimmed=${trimmed%/}
-  base=${trimmed##*/}
-  if [ -z "$base" ]; then
-    return 0
-  fi
-  base=$(printf '%s' "$base" | sed -E 's/\.(tar\.gz|tar\.bz2|tar\.xz|tar\.zst|tgz|tbz2|txz|zip)$//')
-  sanitize "$base"
+read_first_line() {
+  file="$1"
+  [ -f "$file" ] || { printf '%s' ''; return 0; }
+  head -n 1 "$file" 2>/dev/null | tr -d '\r'
 }
 
-# Resolve default projects mode: auto|always|never
-resolve_default_mode() {
-  mode="${DEFAULT_SERVICES_MODE:-}"
-  if [ -z "$mode" ]; then
-    if [ -n "${SERVICES:-}" ] || [ -n "${SERVICES_COUNT:-}" ]; then
-      mode="never"
-    else
-      mode="auto"
+service_env_override() {
+  name="$1"; key="$2"
+  upper_name=$(printf '%s' "$name" | tr '[:lower:].-' '[:upper:]__')
+  var="MAESTRO_${key}_${upper_name}"
+  eval value="\${$var:-}"
+  printf '%s' "$value"
+}
+
+program_name_in_use() {
+  candidate="$1"; parent="$2"; exclude="$3"
+  case " ${REGISTERED_PROGRAMS:-} " in
+    *" ${candidate} "* ) return 0 ;;
+  esac
+  if [ -f "${SUPERVISOR_CONF_DIR}/program-${candidate}.conf" ]; then
+    return 0
+  fi
+  if [ -n "$parent" ]; then
+    path="${parent}/${candidate}"
+    if [ "$path" != "$exclude" ] && [ -e "$path" ]; then
+      return 0
     fi
   fi
+  return 1
+}
+
+ensure_unique_program_name() {
+  base="$1"; parent="$2"; current_path="$3"
+  candidate="$base"
+  suffix=1
+  while program_name_in_use "$candidate" "$parent" "$current_path"; do
+    candidate="${base}-${suffix}"
+    suffix=$((suffix+1))
+  done
+  printf '%s' "$candidate"
+}
+
+resolve_preseed_mode() {
+  mode="${MAESTRO_PRESEEDED_MODE:-${DEFAULT_SERVICES_MODE:-auto}}"
   case "$(to_lower "$mode")" in
     auto|always|never) printf '%s' "$(to_lower "$mode")" ;;
     *)
-      log_warn "Unknown DEFAULT_SERVICES_MODE='$mode', falling back to auto"
+      log_warn "Unknown MAESTRO_PRESEEDED_MODE='${mode}', falling back to auto"
       printf 'auto'
       ;;
   esac
 }
 
-bootstrap_builtin_project() {
-  slot="$1"       # A or B
-  default_program="$2"
-  default_project_dir="$3"
-  default_user="$4"
-  default_port="$5"
-  defaults_mode="$6"
-
-  project_root=$(dirname "$default_project_dir")
-  if [ "$project_root" = "$default_project_dir" ] || [ -z "$project_root" ]; then
-    project_root="/opt/projects"
-  fi
-  mkdir -p "$project_root"
-
-  program="$default_program"
-  project_dir="$default_project_dir"
-
-  eval enabled_override="\${SERVICE_${slot}_ENABLED:-}"
-  eval repo_url="\${SERVICE_${slot}_REPO:-}"
-  eval repo_ref="\${SERVICE_${slot}_REF:-main}"
-  eval tarball_url="\${SERVICE_${slot}_TARBALL:-}"
-  eval cmd_override="\${SERVICE_${slot}_CMD:-}"
-  eval name_override="\${SERVICE_${slot}_NAME:-}"
-
-  identity=""
-  identity_source=""
-  if [ -n "$name_override" ]; then
-    identity=$(sanitize "$name_override")
-    [ -n "$identity" ] && identity_source="override"
-  fi
-  if [ -z "$identity" ] && [ -n "$repo_url" ]; then
-    identity=$(derive_name "$repo_url" || true)
-    [ -n "$identity" ] && identity_source="repo"
-  fi
-  if [ -z "$identity" ] && [ -n "$tarball_url" ]; then
-    identity=$(derive_tarball_name "$tarball_url" || true)
-    [ -n "$identity" ] && identity_source="tarball"
-  fi
-
-  stamp_path="${default_project_dir}/.maestro-name"
-  if [ -z "$identity" ] && [ -f "$stamp_path" ]; then
-    stamp_value=$(head -n 1 "$stamp_path" 2>/dev/null || true)
-    identity=$(sanitize "$stamp_value")
-    [ -n "$identity" ] && identity_source="stamp"
-  fi
-
-  if [ -n "$identity" ] && [ -n "$identity_source" ]; then
-    program="$identity"
-    project_dir="${project_root}/${program}"
-    lower_slot=$(to_lower "$slot")
-    if [ -e "$project_dir" ] && [ "$project_dir" != "$default_project_dir" ]; then
-      program="${program}-${lower_slot}"
-      project_dir="${project_root}/${program}"
-      if [ -e "$project_dir" ]; then
-        log_warn "${default_program}: resolved name collision for ${program}; falling back to legacy naming"
-        program="$default_program"
-        project_dir="$default_project_dir"
-        identity_source=""
-      fi
+discover_preseed_dirs() {
+  roots_raw=${MAESTRO_PRESEEDED_ROOTS:-/opt/projects}
+  printf '%s' "$roots_raw" | tr ',:' '\n' | while IFS= read -r root; do
+    trimmed=$(printf '%s' "$root" | sed 's/^ *//; s/ *$//')
+    [ -n "$trimmed" ] || continue
+    if [ ! -d "$trimmed" ]; then
+      log_debug "Preseed root ${trimmed} not found; skipping"
+      continue
     fi
-    if [ -n "$identity_source" ]; then
-      log_debug "Slot ${slot}: derived project name '${program}' from ${identity_source}"
-    fi
-  fi
+    find "$trimmed" -mindepth 1 -maxdepth 1 -type d -print
+  done
+}
 
-  rm -f "${SUPERVISOR_CONF_DIR}/program-${default_program}.conf"
-  rm -f "${SUPERVISOR_CONF_DIR}/program-${program}.conf"
+record_program() {
+  program="$1"
+  REGISTERED_PROGRAMS="${REGISTERED_PROGRAMS} ${program}"
+}
 
-  if [ "$project_dir" != "$default_project_dir" ] && [ -d "$default_project_dir" ]; then
-    if [ ! -e "$project_dir" ]; then
-      mv "$default_project_dir" "$project_dir"
-    else
-      log_warn "${program}: target directory ${project_dir} already exists; using as-is"
-    fi
-  fi
+register_preseed_project() {
+  project_dir="$1"
+  mode="$2"
 
-  start_project=0
-  force_empty_ok=0
-
-  if [ -n "$enabled_override" ]; then
-    if is_true "$enabled_override"; then
-      start_project=1
-      force_empty_ok=1
-    elif is_false "$enabled_override"; then
-      log_info "${program}: disabled via SERVICE_${slot}_ENABLED=${enabled_override}"
-      return 0
-    else
-      log_warn "${program}: ignoring unrecognised SERVICE_${slot}_ENABLED=${enabled_override}"
-    fi
-  fi
-
-  if [ "$start_project" -eq 0 ]; then
-    case "$defaults_mode" in
-      never)
-        log_info "${program}: default projects disabled (DEFAULT_SERVICES_MODE=never)"
-        return 0
-        ;;
-      always)
-        start_project=1
-        force_empty_ok=1
-        ;;
-      auto)
-        if [ -n "$cmd_override" ] || [ -n "$repo_url" ] || [ -n "$tarball_url" ]; then
-          start_project=1
-          [ -n "$cmd_override" ] && force_empty_ok=1
-        elif ! dir_empty "$project_dir"; then
-          start_project=1
-        fi
-        ;;
-      *)
-        start_project=0
-        ;;
-    esac
-  fi
-
-  if [ "$start_project" -eq 0 ]; then
-    log_info "${program}: nothing to run; skipping"
+  if [ ! -d "$project_dir" ]; then
     return 0
   fi
 
-  lower_slot=$(to_lower "$slot")
-
-  project_user="$default_user"
-  if [ -n "$identity_source" ]; then
-    project_user=$(derive_project_user "$program" "$default_user" "$lower_slot")
+  if [ -f "${project_dir}/.maestro-disable" ]; then
+    log_info "Skipping $(basename "$project_dir"): disabled via .maestro-disable"
+    return 0
   fi
+
+  raw_name=$(read_first_line "${project_dir}/.maestro-name")
+  [ -n "$raw_name" ] || raw_name=$(basename "$project_dir")
+  sanitized=$(sanitize "$raw_name")
+  if [ -z "$sanitized" ]; then
+    log_warn "Unable to derive service name from ${project_dir}; skipping"
+    return 0
+  fi
+
+  parent_dir=$(dirname "$project_dir")
+  program=$(ensure_unique_program_name "$sanitized" "$parent_dir" "$project_dir")
+  target_dir="${parent_dir}/${program}"
+  if [ "$target_dir" != "$project_dir" ] && [ ! -e "$target_dir" ]; then
+    mv "$project_dir" "$target_dir"
+    project_dir="$target_dir"
+    log_debug "Renamed project directory to ${project_dir}"
+  fi
+
+  # Collect overrides (prefer base name, then program name)
+  port_override=$(service_env_override "$sanitized" "PORT")
+  [ -n "$port_override" ] || port_override=$(service_env_override "$program" "PORT")
+  if [ -z "$port_override" ]; then
+    port_file=$(read_first_line "${project_dir}/.maestro-port")
+    port_override="$port_file"
+  fi
+
+  user_override=$(service_env_override "$sanitized" "USER")
+  [ -n "$user_override" ] || user_override=$(service_env_override "$program" "USER")
+  if [ -z "$user_override" ]; then
+    user_file=$(read_first_line "${project_dir}/.maestro-user")
+    user_override="$user_file"
+  fi
+
+  cmd_override=$(service_env_override "$sanitized" "CMD")
+  [ -n "$cmd_override" ] || cmd_override=$(service_env_override "$program" "CMD")
+  if [ -z "$cmd_override" ] && [ -f "${project_dir}/.maestro-cmd" ]; then
+    cmd_override=$(cat "${project_dir}/.maestro-cmd" 2>/dev/null || true)
+  fi
+
+  case "$mode" in
+    never)
+      log_info "${program}: preseed mode=never; skipping directory ${project_dir}"
+      return 0
+      ;;
+    auto)
+      if dir_empty "$project_dir" && [ -z "$cmd_override" ]; then
+        log_info "${program}: directory empty and no command override; skipping in auto mode"
+        return 0
+      fi
+      ;;
+    always)
+      :
+      ;;
+  esac
+
+  resolved_port=$(maestro_resolve_port "$port_override") || {
+    log_warn "${program}: unable to allocate port"
+    return 0
+  }
+
+  fallback_user="svc_${program}"
+  if [ -n "$user_override" ]; then
+    fallback_user="$user_override"
+  fi
+  fallback_user=$(printf '%s' "$fallback_user" | tr '.-' '__')
+  fallback_user=$(printf '%.32s' "$fallback_user")
+  project_user=$(derive_project_user "$program" "$fallback_user" "")
+
   ensure_user "$project_user"
   prepare_user_home "$project_user"
   prepare_project_dir "$project_dir" "$project_user"
 
-  if dir_empty "$project_dir"; then
-    if [ -n "$tarball_url" ]; then
-      log_info "${program}: fetching tarball ${tarball_url}"
-      if ! fetch_tar_into_dir "$tarball_url" "$project_dir" "$project_user" "$program"; then
-        log_warn "${program}: failed to fetch tarball"
-      fi
-    elif [ -n "$repo_url" ]; then
-      archive_url=$(codeload_url "$repo_url" "$repo_ref")
-      log_info "${program}: fetching ${repo_url}@${repo_ref}"
-      if ! fetch_tar_into_dir "$archive_url" "$project_dir" "$project_user" "$program"; then
-        log_warn "${program}: failed to fetch repository"
-      fi
-    fi
-  fi
-
-  prepare_project_dir "$project_dir" "$project_user"
   install_deps_if_any "$project_dir" "$program" "$project_user"
-
-  eval resolved_port="\${SERVICE_${slot}_PORT:-$default_port}"
-  validate_port "SERVICE_${slot}_PORT" "$resolved_port"
-  export "SERVICE_${slot}_PORT=$resolved_port"
 
   if printf '%s\n' "$program" >"${project_dir}/.maestro-name" 2>/dev/null; then
     chown "$project_user":"$project_user" "${project_dir}/.maestro-name" 2>/dev/null || true
+  fi
+  if printf '%s\n' "$resolved_port" >"${project_dir}/.maestro-port" 2>/dev/null; then
+    chown "$project_user":"$project_user" "${project_dir}/.maestro-port" 2>/dev/null || true
   fi
 
   command_value="$cmd_override"
   if [ -z "$command_value" ]; then
     command_value=$(detect_default_cmd "$project_dir" "$resolved_port")
-    if [ -z "$command_value" ]; then
-      command_value="python3 -m http.server ${resolved_port} --directory ${project_dir} --bind 0.0.0.0"
-    fi
+  fi
+  if [ -z "$command_value" ]; then
+    command_value="python3 -m http.server ${resolved_port} --directory ${project_dir} --bind 0.0.0.0"
   fi
 
-  if dir_empty "$project_dir" && [ "$force_empty_ok" -eq 0 ]; then
-    log_warn "${program}: directory still empty after preparation; not registering"
+  if dir_empty "$project_dir" && [ -z "$cmd_override" ] && [ "$mode" != "always" ]; then
+    log_warn "${program}: directory empty after preparation; not registering"
     return 0
   fi
 
@@ -303,8 +263,7 @@ bootstrap_builtin_project() {
   fi
 
   register_service_port "$program" "$resolved_port"
-
-  REGISTERED_PROGRAMS="${REGISTERED_PROGRAMS} ${program}"
+  record_program "$program"
   log_info "${program}: registered command '${command_value}' on port ${resolved_port}"
   return 0
 }
@@ -319,25 +278,20 @@ MAESTRO_PORT_LEDGER=${MAESTRO_PORT_LEDGER:-${MAESTRO_RUNTIME_DIR}/ports.csv}
 export MAESTRO_RUNTIME_DIR MAESTRO_PORT_LEDGER
 mkdir -p "$MAESTRO_RUNTIME_DIR" && chmod 700 "$MAESTRO_RUNTIME_DIR" || true
 rm -f "$MAESTRO_PORT_LEDGER" 2>/dev/null || true
+MAESTRO_RESERVED_PORTS=""
+export MAESTRO_RESERVED_PORTS
 ensure_port_ledger
 
 REGISTERED_PROGRAMS=""
 
-SERVICE_A_PORT="${SERVICE_A_PORT:-8080}"
-SERVICE_B_PORT="${SERVICE_B_PORT:-9090}"
-validate_port SERVICE_A_PORT "$SERVICE_A_PORT"
-validate_port SERVICE_B_PORT "$SERVICE_B_PORT"
-export SERVICE_A_PORT SERVICE_B_PORT
-
-if [ "$SERVICE_A_PORT" = "$SERVICE_B_PORT" ]; then
-  log_error "SERVICE_A_PORT (${SERVICE_A_PORT}) and SERVICE_B_PORT (${SERVICE_B_PORT}) must differ"
-  exit 1
+PRESEEDED_MODE=$(resolve_preseed_mode)
+if [ "$PRESEEDED_MODE" != "never" ]; then
+  log_info "Scanning for preseeded projects (mode=${PRESEEDED_MODE})"
+  discover_preseed_dirs | sort | while IFS= read -r project_path; do
+    [ -z "$project_path" ] && continue
+    register_preseed_project "$project_path" "$PRESEEDED_MODE" || true
+  done
 fi
-
-DEFAULT_SERVICES_MODE=$(resolve_default_mode)
-
-bootstrap_builtin_project "A" "project1" "/opt/projects/project-a" "svc_a" "$SERVICE_A_PORT" "$DEFAULT_SERVICES_MODE"
-bootstrap_builtin_project "B" "project2" "/opt/projects/project-b" "svc_b" "$SERVICE_B_PORT" "$DEFAULT_SERVICES_MODE"
 
 if [ -n "${SERVICES:-}" ] || [ -n "${SERVICES_COUNT:-}" ]; then
   if [ -x /usr/local/bin/deploy-from-env ]; then
@@ -348,17 +302,14 @@ fi
 
 apply_firewall_rules || true
 
-program_conf_glob=$(find "$SUPERVISOR_CONF_DIR" -maxdepth 1 -name 'program-*.conf' 2>/dev/null)
-program_count=$(printf '%s\n' "$program_conf_glob" | awk 'NF{c++} END{printf (c ? c : 0)}')
-trimmed_programs=$(printf '%s' "$REGISTERED_PROGRAMS" | tr -s ' ' | sed 's/^ //')
+program_names=$(find "$SUPERVISOR_CONF_DIR" -maxdepth 1 -name 'program-*.conf' -type f -exec basename {} \; 2>/dev/null | sort | sed 's/^program-//; s/\.conf$//')
+program_count=$(printf '%s\n' "$program_names" | awk 'NF{c++} END{print (c ? c : 0)}')
+
 if [ "$program_count" -eq 0 ]; then
   log_warn "No supervisor programs configured; supervisord will start idle"
 else
-  if [ -n "$trimmed_programs" ]; then
-    log_info "Supervisor programs prepared (${program_count}): ${trimmed_programs}"
-  else
-    log_info "Supervisor programs detected: ${program_count}"
-  fi
+  formatted=$(printf '%s' "$program_names" | tr '\n' ' ' | sed 's/  */ /g; s/^ //; s/ $//')
+  log_info "Supervisor programs prepared (${program_count}): ${formatted}"
 fi
 
 log_info "Launching supervisord"

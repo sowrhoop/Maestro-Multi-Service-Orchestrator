@@ -3,40 +3,33 @@
 Maestro is a production-grade container blueprint for running two or more applications under Supervisord with strict process and filesystem isolation. It replaces the old "Supervisor-Image-Combination" name and puts a polished brand on the same battle-tested runtime so you can ship polyglot projects from a single image without cutting corners on security or operability.
 
 ## Core Capabilities
-- Clone and install two primary projects at build time with optional subdirectory and custom install hooks.
-- Auto-bootstrap the legacy A/B project slots only when code or explicit commands are provided (configurable via `DEFAULT_SERVICES_MODE`).
-- Provision any number of additional projects at runtime using interactive or environment-driven workflows; each project receives its own UNIX user, temp/cache directories, and Supervisor program.
+- Discover and launch any number of pre-seeded project directories (`/opt/projects/*` by default) according to a runtime policy (`MAESTRO_PRESEEDED_MODE`).
+- Provision unlimited additional services at runtime via environment-driven specs or the interactive `deploy` helper; every service receives an isolated UNIX user, temp/cache directories, and Supervisor program.
 - Hardened entrypoint that validates ports, ensures ownership/permissions, and generates Supervisor configs on the fly.
-- Healthcheck script that adapts to the projects you enable and falls back to verifying the Supervisor control socket.
+- Healthcheck script that adapts to registered ports and falls back to verifying the Supervisor control socket.
 
 ## Layout
-- `Dockerfile`: clones repositories, installs dependencies, and lays down runtime assets.
+- `Dockerfile`: installs runtime dependencies and lays down the orchestration tooling.
 - `config/supervisord-main.conf`: Supervisor root configuration (PID and socket in `/tmp`, includes `conf.d`).
-- `scripts/entrypoint.sh`: prepares isolation, writes Supervisor program files, honours default-project policy, and launches Supervisor foreground.
+- `scripts/entrypoint.sh`: prepares isolation, discovers pre-seeded projects, honours autostart policy, and launches Supervisor foreground.
 - `scripts/lib-deploy.sh`: shared helpers for fetching tarballs, detecting default commands, and writing program stanzas.
 - `scripts/deploy-interactive.sh`: prompts inside the container to add projects dynamically.
 - `scripts/deploy-from-env.sh`: idempotent provisioning from environment variables (`SERVICES` or indexed `SVC_*`).
 - `scripts/list-services.sh`: project inventory helper (name retained for compatibility) with table or JSON output.
-- `scripts/remove-service.sh`: removes projects cleanly with optional purge/user deletion modes.
+- `scripts/remove-project.sh`: removes projects cleanly with optional purge/user deletion modes (also installed as `remove-service` for backward compatibility).
 - `healthcheck.sh`: probes configured ports (`HEALTHCHECK_PORTS` override) or falls back to Supervisor status.
 - `.github/workflows/build.yml`: GitHub Actions workflow for building and pushing the image to Docker Hub.
-- `/opt/projects/<name>`: runtime directories for each provisioned project (legacy slots resolve `<name>` from repo/tarball metadata or fall back to `project1`/`project2`).
+- `/opt/projects/<name>`: runtime directories for each provisioned project (name derived from metadata or directory name; no hard-coded slots).
 
 ## Quickstart
 
 ### Build
 ```sh
 # direct Docker CLI
-docker build -t maestro-orchestrator . \
-  --build-arg SERVICE_A_REPO=https://github.com/<owner>/project-a.git \
-  --build-arg SERVICE_A_REF=main \
-  --build-arg SERVICE_B_REPO=https://github.com/<owner>/project-b.git \
-  --build-arg SERVICE_B_REF=main
+docker build -t maestro-orchestrator .
 
-# Makefile helper (same build args, shorter command)
-make build IMAGE=maestro-orchestrator \
-  SERVICE_A_REPO=https://github.com/<owner>/project-a.git \
-  SERVICE_B_REPO=https://github.com/<owner>/project-b.git
+# Makefile helper (pass BUILD_ARGS to forward any custom --build-arg flags)
+make build IMAGE=maestro-orchestrator
 
 # buildx multi-architecture build (set PUSH=true to push instead of load)
 make buildx PUSH=true IMAGE=docker.io/<namespace>/maestro-orchestrator \
@@ -45,43 +38,39 @@ make buildx PUSH=true IMAGE=docker.io/<namespace>/maestro-orchestrator \
 
 > Build commands require Docker BuildKit (Docker 20.10+). If you haven't enabled it, export `DOCKER_BUILDKIT=1` before running the commands above.
 
-Optional build arguments:
-- `SERVICE_A_SUBDIR`, `SERVICE_B_SUBDIR`: if the runnable project lives below the repo root.
-- `SERVICE_A_INSTALL_CMD`, `SERVICE_B_INSTALL_CMD`: custom install steps (useful to mirror each project’s Dockerfile).
-- `PIP_INSTALL_OPTIONS`: appended to the pip command (e.g., `--require-hashes`).
-- `NPM_INSTALL_OPTIONS`: overrides default npm flags (defaults to `--omit=dev --no-audit --no-fund`).
-- `PNPM_VERSION`, `YARN_VERSION`: pin pnpm/yarn toolchain versions when detected.
+### Launch with environment specs
+Pass the `SERVICES` variable to provision any number of projects at boot. Each entry follows `repo|port|ref|name|user|cmd` (leave a field blank to auto-detect or auto-select a value).
 
-Dependency autodetect:
-- Python (`requirements.txt` → `pip install -r`; otherwise `pyproject.toml` / `setup.py` → `pip install .`).
-- Node.js (prefers `pnpm-lock.yaml`, then `yarn.lock`, then `npm ci`, falling back to `npm install`).
-
-### Run the defaults
 ```sh
 docker run -d --name maestro \
-  -p 8080:8080 -p 9090:9090 \
+  -e SERVICES='https://github.com/<owner>/alpha.git|8080|main|alpha|svc_alpha|;https://github.com/<owner>/beta.git||main|beta||;https://github.com/<owner>/gamma.git|0|main|||python app.py' \
+  -p 8080:8080 \
   maestro-orchestrator
 ```
 
-Supervisor program names track the derived project names (sanitized repo/tarball names, or `project1`/`project2` when none are supplied):
+- An empty or zero `port` field tells Maestro to pick a free port; check `list-services` for the resolved value.
+- Provide `name`/`user`/`cmd` only when you need explicit overrides; otherwise Maestro derives sane defaults.
+
+Prefer explicit env vars? Use the indexed form:
+
 ```sh
+docker run -d --name maestro \
+  -e SERVICES_COUNT=3 \
+  -e SVC_1_REPO=https://github.com/<owner>/alpha.git \
+  -e SVC_1_PORT=8080 \
+  -e SVC_2_REPO=https://github.com/<owner>/beta.git \
+  -e SVC_2_REF=release-2025.01 \
+  -e SVC_2_CMD="npm start" \
+  -e SVC_3_REPO=https://github.com/<owner>/gamma.git \
+  maestro-orchestrator
+```
+
+Discover the registered services at runtime:
+
+```sh
+docker exec -it maestro list-services
 docker exec -it maestro supervisorctl status
-docker exec -it maestro supervisorctl restart project1   # replace with the derived name shown above
-docker exec -it maestro supervisorctl tail -f project2   # likewise
 ```
-
-### Runtime source fetch (no rebuild)
-If build arguments were omitted, populate directories on container start:
-```sh
-docker run -d --name maestro \
-  -e SERVICE_A_REPO=https://github.com/<owner>/project-a.git \
-  -e SERVICE_A_REF=main \
-  -e SERVICE_B_REPO=https://github.com/<owner>/project-b.git \
-  -e SERVICE_B_REF=main \
-  -p 8080:8080 -p 9090:9090 \
-  maestro-orchestrator
-```
-The entrypoint downloads tarballs via `codeload.github.com` when `/opt/projects/project-{a,b}` are empty.
 
 ## Infrastructure as Code (Terraform)
 
@@ -91,7 +80,7 @@ For teams that prefer a fully automated workflow (or stakeholders who want to av
 ```sh
 ./iac/provision.sh
 ```
-- The helper checks for Docker and Terraform, prompts you for any missing inputs (container name, optional repo URLs, and host ports), writes `iac/terraform/generated.auto.tfvars`, then runs `terraform init` + `apply`.
+- The helper checks for Docker and Terraform, prompts you for any missing inputs (container name plus optional repo URLs), writes `iac/terraform/generated.auto.tfvars`, then runs `terraform init` + `apply`.
 - Outputs (container ID, published ports, etc.) are echoed at the end so you can copy/paste them into status updates.
 - See `iac/README.md` if you prefer a short standalone guide you can hand to non-engineering stakeholders.
 
@@ -101,49 +90,35 @@ For teams that prefer a fully automated workflow (or stakeholders who want to av
 
 ## Configuration Reference
 
-### Default Project Slots
-- `DEFAULT_SERVICES_MODE` (`auto` | `always` | `never`): governs whether the built-in slots start automatically. `auto` (default) starts when code/commands are present. `always` restores the old "serve static" behaviour; `never` suppresses them entirely.
-- `SERVICE_A_ENABLED`, `SERVICE_B_ENABLED`: explicit `true/false` overrides for each slot.
-- `SERVICE_A_PORT`, `SERVICE_B_PORT`: default 8080/9090; must differ. Ports are validated at runtime.
-- `SERVICE_A_CMD`, `SERVICE_B_CMD`: override launch command. If unset Maestro inspects the directory (Python manifests → `uvicorn app:app`; Node projects → `node server.js` or `npm start`; fallback static server).
-- `SERVICE_A_TARBALL`, `SERVICE_B_TARBALL`: provide a direct tarball URL instead of a Git repo.
-- `SERVICE_A_NAME`, `SERVICE_B_NAME`: optional explicit names for the legacy slots. When omitted, Maestro derives the name from the repo/tarball URL and places the code under `/opt/projects/<name>`; the same name is used for the Supervisor program ID and the project’s UNIX user.
-
-> The environment variable names retain the historical `SERVICE_*` prefix for compatibility, even though Maestro now refers to them as projects.
-
 ### Entrypoint & Supervisor Controls
 - `ENTRYPOINT_LOG_LEVEL`: adjust runtime verbosity (`debug`, `info`, `warn`, `error`; default `info`).
 - `SUPERVISOR_CONF_DIR`: override where generated program configs are written/read (default `/etc/supervisor/conf.d`). CLI helpers (`list-services`, `remove-service`) honour the same variable.
 - Generated program environments automatically expose `/opt/venv-<name>/bin` and `<project>/node_modules/.bin` on `PATH` when those directories exist.
 
 ### Health & Observability
-- `HEALTHCHECK_PORTS`: space/comma separated list (`8080 9090`). When unset, only enabled default slots are probed; if none exist, `supervisorctl status` is used.
+- `HEALTHCHECK_PORTS`: space/comma separated list (`8080 9090`). When unset, Maestro reads the runtime port ledger and probes every registered service; if no ports are registered, it falls back to `supervisorctl status`.
 - `list-services [--json]`: prints every Supervisor program with user, directory, status and command (projects view).
 - Logs stream to stdout/stderr; use `docker logs` or `supervisorctl tail -f <program>`.
 
-### Provisioning Additional Projects
-Interactive mode:
-```sh
-docker exec -it maestro deploy
-```
+### Service Provisioning (`SERVICES`, `SERVICES_COUNT`)
+- `SERVICES="repo|port|ref|name|user|cmd;..."` — compact string form. Leave any field blank to auto-detect (`repo||main|name||` will auto-select the port, user, and command).
+- `SERVICES_COUNT=N` with numbered variables (`SVC_1_REPO`, `SVC_1_PORT`, `SVC_1_REF`, `SVC_1_NAME`, `SVC_1_USER`, `SVC_1_CMD`, ...). Mix-and-match populated fields as needed.
+- Ports that evaluate to `0` or empty are auto-allocated and persisted to `.maestro-port` for subsequent boots.
 
-Environment mode (`SERVICES` compact form shown):
-```sh
-docker run -d --name maestro \
-  -e SERVICES='https://github.com/<owner>/alpha.git|8080|main|alpha|svc_alpha|;https://github.com/<owner>/beta.git|9090|main|beta|svc_beta|' \
-  -p 8080:8080 -p 9090:9090 \
-  maestro-orchestrator
-```
+### Pre-seeded Projects
+- `MAESTRO_PRESEEDED_MODE`: `auto` (default) starts populated directories or those with explicit command overrides, `always` forces registration even when empty, `never` skips discovery altogether.
+- `MAESTRO_PRESEEDED_ROOTS`: whitespace/comma/colon separated list of directories to scan (default `/opt/projects`).
+- Metadata files inside a project directory:
+  - `.maestro-name`: preferred service name (sanitized to derive user and Supervisor program id).
+  - `.maestro-port`: fixed container port (otherwise kept in sync with auto-assigned ports).
+  - `.maestro-cmd`: explicit start command (single or multi-line shell).
+  - `.maestro-user`: desired UNIX account (sanitized through `derive_project_user`).
+- Environment overrides follow `MAESTRO_<KEY>_<SERVICE>` (uppercase, sanitized by replacing `.-` with `_`). Example: `MAESTRO_PORT_ALPHA=8081`, `MAESTRO_CMD_ALPHA="uvicorn app:app --port 8081"`, `MAESTRO_USER_ALPHA=svc_alpha`.
 
-Helpers ensure every project gets:
-- Dedicated UNIX user per project (dynamic slots use `svc_<name>`, legacy slots reuse the derived repo/tarball name with a sanitized prefix) plus a private home and 0027 umask.
-- Temp/cache directories confined to `/tmp/<name>-tmp` and `/tmp/<name>-cache`.
-- Command quoting via `shlex.quote` to survive complex start commands.
-
-Removal:
-```sh
-docker exec -it maestro remove-service <name> --purge --delete-user
-```
+### Runtime helpers
+- `docker exec -it maestro deploy` — interactive workflow for provisioning one or more services in-session.
+- `docker exec -it maestro list-services [--json]` — inventory active Supervisor programs with status and commands.
+- `docker exec -it maestro remove-service <name> [--purge] [--delete-user]` — unregisters a service and optionally purges its files; also available as `remove-project`.
 
 ## Security Hardening
 ```sh
@@ -152,20 +127,20 @@ docker run -d --name maestro \
   --cap-drop ALL --security-opt no-new-privileges \
   --pids-limit 512 --memory 1g --cpus 1.0 \
   --tmpfs /tmp:rw,noexec,nosuid,size=64m \
-  --tmpfs /home/<user_a>:rw,nosuid,size=32m \
-  --tmpfs /home/<user_b>:rw,nosuid,size=32m \
+  -e MAESTRO_PRESEEDED_MODE=never \
+  -e SERVICES='https://github.com/<owner>/alpha.git|8080|main|alpha||;https://github.com/<owner>/beta.git|9090|main|beta||' \
   -p 8080:8080 -p 9090:9090 \
   maestro-orchestrator
 ```
 - Drop `noexec` on `/tmp` if your workloads need executable temp files.
-- Adjust `/home/<user>` tmpfs mounts to match the derived user names if you override the defaults (e.g., `/home/svc_myrepo`).
-- Volume mounts must remain readable by the target project user (sanitized repo name for legacy slots, or the generated `svc_<name>` accounts).
+- Add per-project tmpfs mounts under `/home/<svc_user>` after you know the derived usernames (see `list-services` output).
+- Volume mounts must remain readable by the target project user (sanitized repo name).
 - npm/yarn installs run with audit/funding checks disabled and avoid elevated privileges when bootstrapping toolchains.
 
 ## Troubleshooting
 - Port already allocated: choose free host ports (`-p 18080:8080` etc.) or stop the conflicting listener.
 - `supervisorctl` connection errors: ensure the container is running; the socket lives at `/tmp/supervisor.sock`.
-- Project failed to start: confirm the directory contains code, or force-enable via `SERVICE_A_ENABLED=true`. Use `DEFAULT_SERVICES_MODE=always` for the legacy static-server behaviour.
+- Project failed to start: confirm the directory contains code, or set `MAESTRO_PRESEEDED_MODE=always` so empty directories still register when you provide an explicit command.
 - Permission denied on volume: ensure ownership or use bind mounts with proper UID/GID mapping.
 
 ## CI / Docker Hub Workflow
@@ -181,4 +156,4 @@ docker run -d --name maestro \
 
 ---
 
-**Upgrade note:** If you relied on the original "two static directories" behaviour, set `DEFAULT_SERVICES_MODE=always` or keep explicit `SERVICE_X_CMD` values. Otherwise Maestro only starts projects after assets or commands are supplied, preventing port conflicts when provisioning more workloads.
+**Upgrade note:** Legacy `SERVICE_A_*` / `SERVICE_B_*` variables have been retired. Use the `SERVICES` / `SERVICES_COUNT` specifications for remote sources, or rely on `MAESTRO_PRESEEDED_MODE` plus `.maestro-*` metadata for directories you mount into the image.

@@ -5,6 +5,8 @@ set -eu
 SUPERVISOR_CONF_DIR=${SUPERVISOR_CONF_DIR:-/etc/supervisor/conf.d}
 PORT_LEDGER=${MAESTRO_PORT_LEDGER:-/run/maestro/ports.csv}
 IPTABLES_CMD=${MAESTRO_IPTABLES_BIN:-iptables}
+MAESTRO_RESERVED_PORTS=${MAESTRO_RESERVED_PORTS:-}
+export MAESTRO_RESERVED_PORTS
 
 sanitize() {
   printf "%s" "$1" | tr '[:upper:] ' '[:lower:]-' | sed 's/[^a-z0-9._-]//g'
@@ -121,6 +123,7 @@ register_service_port() {
   printf '%s|%s\n' "$name" "$port" >>"$tmp"
   mv "$tmp" "$ledger"
   chmod 600 "$ledger" 2>/dev/null || true
+  maestro_reserve_port "$port" >/dev/null 2>&1 || true
 }
 
 remove_service_port() {
@@ -139,6 +142,105 @@ list_registered_ports() {
   ledger="$PORT_LEDGER"
   [ -f "$ledger" ] || return 0
   awk -F'|' 'NF>=2 && $2 ~ /^[0-9]+$/ {print $2}' "$ledger" | sort -n | uniq
+}
+
+maestro_validate_port() {
+  name="$1"; value="$2"
+  case "$value" in
+    ''|*[!0-9]*)
+      printf '%s\n' "maestro: ${name} (${value}) must be an integer" >&2
+      return 1
+      ;;
+  esac
+  if [ "$value" -lt 1 ] || [ "$value" -gt 65535 ]; then
+    printf '%s\n' "maestro: ${name} (${value}) must be between 1 and 65535" >&2
+    return 1
+  fi
+  return 0
+}
+
+maestro_collect_used_ports() {
+  ensured=$(list_registered_ports 2>/dev/null || true)
+  combined="${MAESTRO_RESERVED_PORTS:-}"
+  if [ -n "$ensured" ]; then
+    combined="$(printf '%s %s' "$combined" "$ensured" | tr -s ' ')"
+  fi
+  printf '%s' "$combined" | tr -s ' ' ' '
+}
+
+maestro_find_free_port() {
+  used_input=$(printf '%s' "${1:-}" | tr -s ' ' ',')
+  python3 - "$used_input" <<'PY'
+import socket, sys
+
+raw = sys.argv[1] if len(sys.argv) > 1 else ""
+used = set()
+for piece in raw.split(","):
+    piece = piece.strip()
+    if not piece:
+        continue
+    try:
+        used.add(int(piece))
+    except ValueError:
+        continue
+
+attempts = 0
+while attempts < 100:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("0.0.0.0", 0))
+        port = sock.getsockname()[1]
+    if port not in used:
+        print(port)
+        sys.exit(0)
+    attempts += 1
+
+print("")
+PY
+}
+
+maestro_reserve_port() {
+  port="$1"
+  [ -n "$port" ] || return 1
+  case " ${MAESTRO_RESERVED_PORTS:-} " in
+    *" ${port} "* ) return 0 ;;
+  esac
+  if [ -z "${MAESTRO_RESERVED_PORTS:-}" ]; then
+    MAESTRO_RESERVED_PORTS="$port"
+  else
+    MAESTRO_RESERVED_PORTS="${MAESTRO_RESERVED_PORTS} ${port}"
+  fi
+  export MAESTRO_RESERVED_PORTS
+}
+
+maestro_resolve_port() {
+  requested="$1"
+  case "$requested" in
+    '' ) : ;;
+    0 ) requested="";;
+  esac
+  requested=$(printf '%s' "$requested" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+  used=$(maestro_collect_used_ports)
+  if [ -n "$requested" ]; then
+    if ! maestro_validate_port "PORT" "$requested"; then
+      return 1
+    fi
+    case " ${used} " in
+      *" ${requested} "* )
+        printf '%s\n' "maestro: port ${requested} already in use" >&2
+        return 1
+        ;;
+    esac
+    maestro_reserve_port "$requested"
+    printf '%s' "$requested"
+    return 0
+  fi
+  candidate=$(maestro_find_free_port "$used")
+  if [ -z "$candidate" ]; then
+    printf '%s\n' "maestro: unable to auto-select a free port" >&2
+    return 1
+  fi
+  maestro_reserve_port "$candidate"
+  printf '%s' "$candidate"
 }
 
 apply_firewall_rules() {
