@@ -257,6 +257,43 @@ venv_dir="${MAESTRO_SANDBOX_VENV:-}"
 home_dir="${HOME:-/tmp}"
 readonly DEFAULT_SANDBOX_PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 sandbox_path="${PATH:-$DEFAULT_SANDBOX_PATH}"
+target_user="${MAESTRO_SANDBOX_RUNAS_USER:-}"
+target_uid="${MAESTRO_SANDBOX_RUNAS_UID:-}"
+target_gid="${MAESTRO_SANDBOX_RUNAS_GID:-}"
+
+if [[ -z "$target_user" ]]; then
+  target_user="$(id -un 2>/dev/null || printf '%s' "")"
+  target_uid="$(id -u 2>/dev/null || printf '%s' "")"
+  target_gid="$(id -g 2>/dev/null || printf '%s' "")"
+fi
+
+if [[ -n "$target_user" && -z "$target_uid" ]]; then
+  target_uid="$(id -u "$target_user" 2>/dev/null || printf '%s' "")"
+fi
+if [[ -n "$target_user" && -z "$target_gid" ]]; then
+  target_gid="$(id -g "$target_user" 2>/dev/null || printf '%s' "")"
+fi
+
+if [[ -n "$target_user" && -z "$target_uid" ]]; then
+  log_warn "unable to resolve uid for ${target_user}; using current user"
+  target_user=""
+fi
+if [[ -n "$target_user" && -z "$target_gid" ]]; then
+  log_warn "unable to resolve gid for ${target_user}; using current user"
+  target_user=""
+fi
+
+should_drop_priv=0
+current_uid=$(id -u)
+if [[ -n "$target_user" && -n "$target_uid" && "$current_uid" -eq 0 && "$target_uid" != "$current_uid" ]]; then
+  should_drop_priv=1
+fi
+if [[ "$should_drop_priv" -eq 1 ]]; then
+  if ! command -v runuser >/dev/null 2>&1; then
+    log_warn "runuser not available; executing sandbox payload as root"
+    should_drop_priv=0
+  fi
+fi
 
 mkdir -p "$tmp_dir" "$cache_dir" >/dev/null 2>&1 || true
 mkdir -p "${cache_dir}/pip" "${cache_dir}/npm" "${cache_dir}/pnpm" "${cache_dir}/yarn" >/dev/null 2>&1 || true
@@ -373,12 +410,23 @@ if [[ -n "$allowed_hosts" ]]; then
   args+=(--setenv MAESTRO_SANDBOX_NET_ALLOW_LIST "$allowed_hosts")
 fi
 
+if [[ -n "$target_user" ]]; then
+  args+=(--setenv USER "$target_user")
+  args+=(--setenv LOGNAME "$target_user")
+fi
+
 setup_cgroup
 trap cleanup_cgroup EXIT
 
 printf -v quoted_cmd '%q ' "${command[@]}"
 wrapper_init="ip link set lo up >/dev/null 2>&1 || true"
-wrapper="${wrapper_init}; exec ${quoted_cmd% }"
+exec_cmd="${quoted_cmd% }"
+if [[ "$should_drop_priv" -eq 1 ]]; then
+  run_line=$(printf 'runuser -u %q -- %s' "$target_user" "$exec_cmd")
+else
+  run_line="$exec_cmd"
+fi
+wrapper="${wrapper_init}; exec ${run_line}"
 
 args+=(-- /bin/sh -c "$wrapper")
 

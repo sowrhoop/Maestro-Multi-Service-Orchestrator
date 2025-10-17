@@ -309,18 +309,29 @@ sandbox_exec() {
 
   ensure_program_dirs "$name" "$user"
 
+  if ! user_uid=$(id -u "$user" 2>/dev/null); then
+    echo "sandbox_exec: unable to resolve uid for $user" >&2
+    return 1
+  fi
+  if ! user_gid=$(id -g "$user" 2>/dev/null); then
+    echo "sandbox_exec: unable to resolve gid for $user" >&2
+    return 1
+  fi
   env \
     MAESTRO_SANDBOX_NAME="$name" \
     MAESTRO_SANDBOX_PROJECT="$workdir" \
     MAESTRO_SANDBOX_TMP="$PROGRAM_TMP_DIR" \
     MAESTRO_SANDBOX_CACHE="$PROGRAM_CACHE_DIR" \
     MAESTRO_SANDBOX_VENV="$PROGRAM_VENV_DIR" \
+    MAESTRO_SANDBOX_RUNAS_USER="$user" \
+    MAESTRO_SANDBOX_RUNAS_UID="$user_uid" \
+    MAESTRO_SANDBOX_RUNAS_GID="$user_gid" \
     HOME="$PROGRAM_USER_HOME" \
     PIP_INSTALL_OPTIONS="${PIP_INSTALL_OPTIONS:-}" \
     NPM_INSTALL_OPTIONS="${NPM_INSTALL_OPTIONS:-}" \
     PNPM_VERSION="${PNPM_VERSION:-}" \
     YARN_VERSION="${YARN_VERSION:-}" \
-    runuser -u "$user" -- /usr/local/bin/maestro-sandbox --workdir "$workdir" -- "$@"
+    /usr/local/bin/maestro-sandbox --workdir "$workdir" -- "$@"
 }
 
 fetch_tar_into_dir() {
