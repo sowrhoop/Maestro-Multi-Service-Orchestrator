@@ -62,31 +62,83 @@ codeload_url() {
   fi
 }
 
+escape_env_value() {
+  printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
+program_paths() {
+  name="$1"; user="$2"
+  PROGRAM_USER_HOME="/home/${user}"
+  base="${PROGRAM_USER_HOME}/.maestro"
+  PROGRAM_RUNTIME_DIR="${base}/runtime/${name}"
+  PROGRAM_TMP_DIR="${base}/tmp/${name}"
+  PROGRAM_CACHE_DIR="${base}/cache/${name}"
+  PROGRAM_VENV_DIR="${base}/venvs/${name}"
+}
+
+ensure_program_dirs() {
+  name="$1"; user="$2"
+  program_paths "$name" "$user"
+
+  for dir in "$PROGRAM_RUNTIME_DIR" "$PROGRAM_TMP_DIR" "$PROGRAM_CACHE_DIR" "$PROGRAM_VENV_DIR"; do
+    mkdir -p "$dir"
+    chown "$user":"$user" "$dir" 2>/dev/null || true
+    case "$dir" in
+      "$PROGRAM_CACHE_DIR"|"$PROGRAM_TMP_DIR")
+        chmod 700 "$dir" 2>/dev/null || true
+        ;;
+      *)
+        chmod 750 "$dir" 2>/dev/null || true
+        ;;
+    esac
+  done
+
+  for sub in pip npm pnpm yarn; do
+    mkdir -p "${PROGRAM_CACHE_DIR}/${sub}"
+    chown "$user":"$user" "${PROGRAM_CACHE_DIR}/${sub}" 2>/dev/null || true
+    chmod 700 "${PROGRAM_CACHE_DIR}/${sub}" 2>/dev/null || true
+  done
+}
+
+sandbox_exec() {
+  user="$1"; workdir="$2"; name="$3"
+  shift 3
+  [ $# -gt 0 ] || { echo "sandbox_exec: command missing" >&2; return 1; }
+
+  ensure_program_dirs "$name" "$user"
+
+  env \
+    MAESTRO_SANDBOX_NAME="$name" \
+    MAESTRO_SANDBOX_PROJECT="$workdir" \
+    MAESTRO_SANDBOX_TMP="$PROGRAM_TMP_DIR" \
+    MAESTRO_SANDBOX_CACHE="$PROGRAM_CACHE_DIR" \
+    MAESTRO_SANDBOX_VENV="$PROGRAM_VENV_DIR" \
+    HOME="$PROGRAM_USER_HOME" \
+    PIP_INSTALL_OPTIONS="${PIP_INSTALL_OPTIONS:-}" \
+    NPM_INSTALL_OPTIONS="${NPM_INSTALL_OPTIONS:-}" \
+    PNPM_VERSION="${PNPM_VERSION:-}" \
+    YARN_VERSION="${YARN_VERSION:-}" \
+    runuser -u "$user" -- /usr/local/bin/maestro-sandbox --workdir "$workdir" -- "$@"
+}
+
 fetch_tar_into_dir() {
-  url="$1"; dest="$2"
+  url="$1"; dest="$2"; user="$3"; name="$4"
   [ -n "$url" ] || { echo "fetch_tar_into_dir: url missing" >&2; return 1; }
   [ -n "$dest" ] || { echo "fetch_tar_into_dir: dest missing" >&2; return 1; }
+  [ -n "$user" ] || { echo "fetch_tar_into_dir: user missing" >&2; return 1; }
+  [ -n "$name" ] || { echo "fetch_tar_into_dir: program name missing" >&2; return 1; }
 
-  tmp="$(mktemp -t fetch.XXXXXX.tar.gz)" || return 1
-  if ! curl -fsSL "$url" -o "$tmp"; then
-    echo "Failed to download: $url" >&2
-    rm -f "$tmp"
-    return 1
-  fi
+  ensure_program_dirs "$name" "$user"
 
   mkdir -p "$dest"
-  # Prefer stripping the leading directory when archives contain a root folder.
-  if tar -xzf "$tmp" -C "$dest" --strip-components 1 2>/dev/null; then
-    :
-  elif tar -xzf "$tmp" -C "$dest" 2>/dev/null; then
-    :
-  else
-    echo "Failed to extract archive from $url" >&2
-    rm -f "$tmp"
+  chown "$user":"$user" "$dest" 2>/dev/null || true
+  chmod 750 "$dest" 2>/dev/null || true
+
+  if ! sandbox_exec "$user" "$dest" "$name" /usr/local/lib/deploy/fetch-and-extract.sh "$url"; then
+    echo "fetch_tar_into_dir: failed to retrieve $url" >&2
     return 1
   fi
 
-  rm -f "$tmp"
   return 0
 }
 
@@ -144,42 +196,97 @@ PY
 }
 
 install_deps_if_any() {
-  dir="$1"; name="$2"
-  venv="/opt/venv-${name}"
-  if [ -n "${NPM_INSTALL_OPTIONS:-}" ]; then
-    npm_flags="$NPM_INSTALL_OPTIONS"
-  else
-    npm_flags="--omit=dev --no-audit --no-fund"
-  fi
+  dir="$1"; name="$2"; user="$3"
+  ensure_program_dirs "$name" "$user"
+  chown -R "$user":"$user" "$dir" 2>/dev/null || true
+  chmod -R 750 "$dir" 2>/dev/null || true
 
   if [ -f "$dir/requirements.txt" ] || [ -f "$dir/pyproject.toml" ] || [ -f "$dir/setup.py" ]; then
-    if python3 -m venv "$venv" >/dev/null 2>&1; then
-      if [ -f "$dir/requirements.txt" ]; then
-        "$venv/bin/pip" install --no-cache-dir -r "$dir/requirements.txt" >/dev/null 2>&1 || \
-        "$venv/bin/pip" install --no-cache-dir "$dir" >/dev/null 2>&1 || true
-      else
-        "$venv/bin/pip" install --no-cache-dir "$dir" >/dev/null 2>&1 || true
+    sandbox_exec "$user" "$dir" "$name" /bin/sh -eu -c '
+      venv="${MAESTRO_SANDBOX_VENV}"
+      if [ ! -d "${venv}/bin" ]; then
+        python3 -m venv "${venv}" >/dev/null 2>&1 || python3 -m venv "${venv}"
       fi
-    fi
+      PATH="${venv}/bin:${PATH}"
+      export PATH
+      install_opts="${PIP_INSTALL_OPTIONS:-}"
+      if [ -f requirements.txt ]; then
+        if [ -n "$install_opts" ]; then
+          pip install $install_opts -r requirements.txt || pip install $install_opts . || true
+        else
+          pip install -r requirements.txt || pip install . || true
+        fi
+      elif [ -f pyproject.toml ] || [ -f setup.py ]; then
+        if [ -n "$install_opts" ]; then
+          pip install $install_opts . || true
+        else
+          pip install . || true
+        fi
+      fi
+    '
   fi
 
   if [ -f "$dir/package.json" ]; then
-    (cd "$dir" && (npm ci ${npm_flags} || npm install ${npm_flags}) && npm cache clean --force || true)
+    sandbox_exec "$user" "$dir" "$name" /bin/sh -eu -c '
+      npm_flags="${NPM_INSTALL_OPTIONS:-}"
+      if [ -z "$npm_flags" ]; then
+        npm_flags="--omit=dev --no-audit --no-fund"
+      fi
+      if [ -f pnpm-lock.yaml ]; then
+        pnpm_spec=""
+        if [ -n "${PNPM_VERSION:-}" ]; then
+          pnpm_spec="@${PNPM_VERSION}"
+        fi
+        (corepack enable || true)
+        if ! command -v pnpm >/dev/null 2>&1; then
+          corepack prepare "pnpm${pnpm_spec}" --activate || npm install --global --no-audit --no-fund --loglevel=error --unsafe-perm=false "pnpm${pnpm_spec}"
+        fi
+        pnpm install --frozen-lockfile --prod || pnpm install --prod || true
+      elif [ -f yarn.lock ]; then
+        yarn_spec=""
+        if [ -n "${YARN_VERSION:-}" ]; then
+          yarn_spec="@${YARN_VERSION}"
+        fi
+        (corepack enable || true)
+        if ! command -v yarn >/dev/null 2>&1; then
+          corepack prepare "yarn${yarn_spec}" --activate || npm install --global --no-audit --no-fund --loglevel=error --unsafe-perm=false "yarn${yarn_spec}"
+        fi
+        yarn install --frozen-lockfile --production || yarn install --production || true
+      elif [ -f package-lock.json ]; then
+        npm ci $npm_flags || npm install $npm_flags || true
+      else
+        npm install $npm_flags || true
+      fi
+      npm cache clean --force || true
+    '
   fi
 }
 
 write_program_conf() {
   name="$1"; dir="$2"; cmd="$3"; user="$4"
-  tmpd="/tmp/${name}-tmp"; cache="/tmp/${name}-cache"
-  mkdir -p "$tmpd" "$cache"
-  chown -R "$user":"$user" "$tmpd" "$cache" "$dir" || true
+  ensure_program_dirs "$name" "$user"
   quoted_cmd=$(python3 -c 'import shlex,sys; print(shlex.quote(sys.argv[1]))' "$cmd")
+  quoted_workdir=$(python3 -c 'import shlex,sys; print(shlex.quote(sys.argv[1]))' "$dir")
   if [ -z "$quoted_cmd" ]; then
     echo "write_program_conf: failed to quote command for $name" >&2
     return 1
   fi
-  env_line="HOME=\"/home/${user}\",TMPDIR=\"${tmpd}\",XDG_CACHE_HOME=\"${cache}\""
-  venv_bin="/opt/venv-${name}/bin"
+  if [ -z "$quoted_workdir" ]; then
+    echo "write_program_conf: failed to quote workdir for $name" >&2
+    return 1
+  fi
+
+  env_line=$(printf 'HOME="%s",TMPDIR="%s",XDG_CACHE_HOME="%s",MAESTRO_SANDBOX_NAME="%s",MAESTRO_SANDBOX_PROJECT="%s",MAESTRO_SANDBOX_TMP="%s",MAESTRO_SANDBOX_CACHE="%s",MAESTRO_SANDBOX_VENV="%s"' \
+    "$(escape_env_value "/home/${user}")" \
+    "$(escape_env_value "$PROGRAM_TMP_DIR")" \
+    "$(escape_env_value "$PROGRAM_CACHE_DIR")" \
+    "$(escape_env_value "$name")" \
+    "$(escape_env_value "$dir")" \
+    "$(escape_env_value "$PROGRAM_TMP_DIR")" \
+    "$(escape_env_value "$PROGRAM_CACHE_DIR")" \
+    "$(escape_env_value "$PROGRAM_VENV_DIR")")
+
+  venv_bin="${PROGRAM_VENV_DIR}/bin"
   node_bin="${dir}/node_modules/.bin"
   path_prefix=""
   if [ -d "$venv_bin" ]; then
@@ -193,13 +300,13 @@ write_program_conf() {
     fi
   fi
   if [ -n "$path_prefix" ]; then
-    env_line="${env_line},PATH=\"${path_prefix}:\\$PATH\""
+    env_line="${env_line},PATH=\"$(escape_env_value "${path_prefix}:\$PATH")\""
   fi
 
   cat >"${SUPERVISOR_CONF_DIR}/program-${name}.conf" <<EOF
 [program:${name}]
 directory=${dir}
-command=/bin/sh -c ${quoted_cmd}
+command=/usr/local/bin/maestro-sandbox --workdir ${quoted_workdir} -- /bin/sh -lc ${quoted_cmd}
 user=${user}
 environment=${env_line}
 umask=0027

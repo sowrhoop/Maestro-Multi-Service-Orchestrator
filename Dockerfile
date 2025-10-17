@@ -47,6 +47,7 @@ RUN --mount=type=cache,target=/var/cache/apt --mount=type=cache,target=/var/lib/
     nodejs npm \
     supervisor \
     git \
+    bubblewrap uidmap unzip \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /opt/projects
@@ -163,10 +164,14 @@ COPY scripts/deploy-from-env.sh /usr/local/bin/deploy-from-env
 COPY scripts/list-services.sh /usr/local/bin/list-services
 COPY scripts/remove-service.sh /usr/local/bin/remove-service
 COPY scripts/lib-deploy.sh /usr/local/lib/deploy/lib-deploy.sh
+COPY scripts/maestro-sandbox.sh /usr/local/bin/maestro-sandbox
+COPY scripts/fetch-and-extract.sh /usr/local/lib/deploy/fetch-and-extract.sh
 RUN chmod +x /healthcheck.sh /entrypoint.sh \
  && chmod +x /usr/local/bin/deploy /usr/local/bin/deploy-from-env \
                /usr/local/bin/list-services /usr/local/bin/remove-service \
+               /usr/local/bin/maestro-sandbox \
  && chmod 755 /usr/local/lib/deploy/lib-deploy.sh \
+ && chmod 755 /usr/local/lib/deploy/fetch-and-extract.sh \
  && apt-get purge -y git \
  && apt-get autoremove -y \
  && rm -rf /var/lib/apt/lists/*

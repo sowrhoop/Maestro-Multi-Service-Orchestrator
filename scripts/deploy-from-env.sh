@@ -25,8 +25,8 @@ provision_one() {
   DEST="/opt/projects/${NAME}"
   mkdir -p "$DEST"
   URL=$(codeload_url "$REPO" "$REF")
-  fetch_tar_into_dir "$URL" "$DEST"
-  install_deps_if_any "$DEST" "$NAME"
+  fetch_tar_into_dir "$URL" "$DEST" "$USER" "$NAME"
+  install_deps_if_any "$DEST" "$NAME" "$USER"
 
   CMD=${CMD_IN:-$(detect_default_cmd "$DEST" "$PORT")}
   chown -R "$USER":"$USER" "$DEST" || true

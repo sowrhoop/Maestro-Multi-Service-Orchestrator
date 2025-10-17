@@ -261,19 +261,20 @@ bootstrap_builtin_project() {
   if dir_empty "$project_dir"; then
     if [ -n "$tarball_url" ]; then
       log_info "${program}: fetching tarball ${tarball_url}"
-      if ! fetch_tar_into_dir "$tarball_url" "$project_dir"; then
+      if ! fetch_tar_into_dir "$tarball_url" "$project_dir" "$project_user" "$program"; then
         log_warn "${program}: failed to fetch tarball"
       fi
     elif [ -n "$repo_url" ]; then
       archive_url=$(codeload_url "$repo_url" "$repo_ref")
       log_info "${program}: fetching ${repo_url}@${repo_ref}"
-      if ! fetch_tar_into_dir "$archive_url" "$project_dir"; then
+      if ! fetch_tar_into_dir "$archive_url" "$project_dir" "$project_user" "$program"; then
         log_warn "${program}: failed to fetch repository"
       fi
     fi
   fi
 
   prepare_project_dir "$project_dir" "$project_user"
+  install_deps_if_any "$project_dir" "$program" "$project_user"
 
   eval resolved_port="\${SERVICE_${slot}_PORT:-$default_port}"
   validate_port "SERVICE_${slot}_PORT" "$resolved_port"

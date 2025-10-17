@@ -34,9 +34,9 @@ while [ "$i" -le "$COUNT" ]; do
   DEST="/opt/projects/${NAME}"
   mkdir -p "$DEST"
   URL=$(codeload_url "$REPO" "$REF")
-  fetch_tar_into_dir "$URL" "$DEST"
+  fetch_tar_into_dir "$URL" "$DEST" "$USER" "$NAME"
 
-  install_deps_if_any "$DEST" "$NAME"
+  install_deps_if_any "$DEST" "$NAME" "$USER"
 
   DEFAULT_CMD=$(detect_default_cmd "$DEST" "$PORT")
   echo -n "Start command [${DEFAULT_CMD}]: "
