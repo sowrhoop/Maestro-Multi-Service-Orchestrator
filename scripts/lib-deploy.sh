@@ -286,9 +286,13 @@ ensure_program_dirs() {
   name="$1"; user="$2"
   program_paths "$name" "$user"
 
-  local failed=0
-
-  local base_root base_runtime base_tmp base_cache base_venvs owner
+  failed=0
+  owner=""
+  base_root=""
+  base_runtime=""
+  base_tmp=""
+  base_cache=""
+  base_venvs=""
 
   base_root="${PROGRAM_USER_HOME}/.maestro"
   base_runtime="${base_root}/runtime"
@@ -359,6 +363,7 @@ ensure_program_dirs() {
   fi
 
   if [ "$failed" -eq 0 ]; then
+    unset failed owner base_root base_runtime base_tmp base_cache base_venvs
     return 0
   fi
 
@@ -380,6 +385,7 @@ ensure_program_dirs() {
     chmod 755 "${PROGRAM_CACHE_DIR}/${sub}" 2>/dev/null || true
   done
 
+  unset failed owner base_root base_runtime base_tmp base_cache base_venvs
   return 1
 }
 
