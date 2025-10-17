@@ -328,7 +328,7 @@ if [[ -n "$project_dir" ]]; then
 fi
 mkdir -p "$home_dir" >/dev/null 2>&1 || true
 
-net_policy_raw="${MAESTRO_SANDBOX_NET_POLICY:-deny}"
+net_policy_raw="${MAESTRO_SANDBOX_NET_POLICY:-allow}"
 net_policy=$(to_lower "$net_policy_raw")
 net_allow_file="${MAESTRO_SANDBOX_NET_ALLOW_FILE:-/etc/maestro/sandbox-net-allow}"
 allowed_hosts=""
