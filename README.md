@@ -127,6 +127,7 @@ For teams that prefer a fully automated workflow (or stakeholders who want to av
 - Override `MAESTRO_SANDBOX_NET_ALLOW_FILE` to point at your own policy file if you need to manage it externally; the same ownership/permission checks apply.
 - Resource ceilings are configurable via `MAESTRO_SANDBOX_MEMORY` (e.g., `512M` or `max`), `MAESTRO_SANDBOX_CPU_QUOTA_US` / `MAESTRO_SANDBOX_CPU_PERIOD_US`, and `MAESTRO_SANDBOX_PIDS_MAX`; see `scripts/maestro-sandbox.sh` for defaults.
 - If the host kernel forbids user namespaces or Bubblewrap is missing, Maestro logs a warning and runs the helper without sandbox isolation (still honouring the configured run-as user). Enable user namespaces or run in a privileged container to regain full confinement.
+- When the container runtime prevents changing ownership (common in rootless Podman), Maestro automatically falls back to root-owned working directories under `/tmp/maestro-fallback`, so provisioning continues without manual intervention.
 
 ## Security Hardening
 ```sh

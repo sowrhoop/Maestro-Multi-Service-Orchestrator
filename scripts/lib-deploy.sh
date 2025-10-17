@@ -71,8 +71,12 @@ escape_env_value() {
 }
 
 program_paths() {
-  name="$1"; user="$2"
-  PROGRAM_USER_HOME="/home/${user}"
+  name="$1"; user="$2"; home_override="${3:-}"
+  if [ -n "$home_override" ]; then
+    PROGRAM_USER_HOME="$home_override"
+  else
+    PROGRAM_USER_HOME="/home/${user}"
+  fi
   base="${PROGRAM_USER_HOME}/.maestro"
   PROGRAM_RUNTIME_DIR="${base}/runtime/${name}"
   PROGRAM_TMP_DIR="${base}/tmp/${name}"
@@ -307,7 +311,28 @@ ensure_program_dirs() {
     chmod 700 "${PROGRAM_CACHE_DIR}/${sub}" 2>/dev/null || true
   done
 
-  return "$failed"
+  if [ "$failed" -eq 0 ]; then
+    return 0
+  fi
+
+  # Fallback: use root-owned directories under /tmp so provisioning still works
+  fallback_root="${MAESTRO_RUNTIME_FALLBACK_BASE:-/tmp/maestro-fallback}"
+  [ -n "$fallback_root" ] || fallback_root="/tmp/maestro-fallback"
+  fallback_home="${fallback_root}/${user:-root}"
+  program_paths "$name" "$user" "$fallback_home"
+  mkdir -p "$fallback_home" 2>/dev/null || true
+  chmod 755 "$fallback_home" 2>/dev/null || true
+
+  for dir in "$PROGRAM_RUNTIME_DIR" "$PROGRAM_TMP_DIR" "$PROGRAM_CACHE_DIR" "$PROGRAM_VENV_DIR"; do
+    mkdir -p "$dir"
+    chmod 755 "$dir" 2>/dev/null || true
+  done
+  for sub in pip npm pnpm yarn; do
+    mkdir -p "${PROGRAM_CACHE_DIR}/${sub}"
+    chmod 755 "${PROGRAM_CACHE_DIR}/${sub}" 2>/dev/null || true
+  done
+
+  return 1
 }
 
 sandbox_exec() {
