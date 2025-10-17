@@ -14,6 +14,26 @@ log_warn() {
   printf 'maestro-sandbox: %s\n' "$*" >&2
 }
 
+bwrap_support_state="unknown"
+
+check_bwrap_support() {
+  if [[ "$bwrap_support_state" == "yes" ]]; then
+    return 0
+  elif [[ "$bwrap_support_state" == "no" ]]; then
+    return 1
+  fi
+
+  local err
+  if err=$(bwrap --ro-bind / / --dev-bind /dev/null /dev/null --proc /proc -- /bin/true 2>&1); then
+    bwrap_support_state="yes"
+    return 0
+  else
+    log_warn "bubblewrap self-test failed (${err:-unknown}); sandbox disabled for this run"
+    bwrap_support_state="no"
+    return 1
+  fi
+}
+
 to_lower() {
   local input="${1:-}"
   printf '%s' "$input" | tr '[:upper:]' '[:lower:]'
@@ -241,11 +261,6 @@ if [[ $# -eq 0 ]]; then
   exit 64
 fi
 
-if ! command -v bwrap >/dev/null 2>&1; then
-  echo "maestro-sandbox: bubblewrap not available" >&2
-  exit 127
-fi
-
 command=("$@")
 umask 0027
 
@@ -295,6 +310,14 @@ if [[ "$should_drop_priv" -eq 1 ]]; then
   fi
 fi
 
+use_bwrap=1
+if ! command -v bwrap >/dev/null 2>&1; then
+  log_warn "bubblewrap binary missing; running command without sandbox"
+  use_bwrap=0
+elif ! check_bwrap_support; then
+  use_bwrap=0
+fi
+
 mkdir -p "$tmp_dir" "$cache_dir" >/dev/null 2>&1 || true
 mkdir -p "${cache_dir}/pip" "${cache_dir}/npm" "${cache_dir}/pnpm" "${cache_dir}/yarn" >/dev/null 2>&1 || true
 if [[ -n "$venv_dir" ]]; then
@@ -323,6 +346,42 @@ case "$net_policy" in
     net_policy="deny"
     ;;
 esac
+
+printf -v quoted_cmd '%q ' "${command[@]}"
+exec_cmd="${quoted_cmd% }"
+
+if [[ "$use_bwrap" -eq 0 ]]; then
+  log_warn "maestro-sandbox operating without isolation"
+
+  if [[ -n "$home_dir" ]]; then export HOME="$home_dir"; fi
+  if [[ -n "$tmp_dir" ]]; then export TMPDIR="$tmp_dir"; fi
+  if [[ -n "$cache_dir" ]]; then export XDG_CACHE_HOME="$cache_dir"; fi
+  export PIP_CACHE_DIR="${cache_dir}/pip"
+  export NPM_CONFIG_CACHE="${cache_dir}/npm"
+  export YARN_CACHE_FOLDER="${cache_dir}/yarn"
+  export PNPM_HOME="${cache_dir}/pnpm"
+  export MAESTRO_SANDBOX=1
+  export MAESTRO_SANDBOX_NAME="$name"
+  if [[ -n "$allowed_hosts" ]]; then export MAESTRO_SANDBOX_NET_ALLOW_LIST="$allowed_hosts"; fi
+
+  if [[ -n "$venv_dir" ]]; then
+    export VIRTUAL_ENV="$venv_dir"
+    export PATH="$venv_dir/bin:$sandbox_path"
+  else
+    export PATH="$sandbox_path"
+  fi
+
+  if [[ -n "$target_user" ]]; then
+    export USER="$target_user"
+    export LOGNAME="$target_user"
+  fi
+
+  if [[ "$should_drop_priv" -eq 1 ]]; then
+    exec runuser -u "$target_user" -- /bin/sh -c "$exec_cmd"
+  else
+    exec /bin/sh -c "$exec_cmd"
+  fi
+fi
 
 declare -a args
 args=(bwrap --die-with-parent --unshare-pid --unshare-ipc --proc /proc)
@@ -418,9 +477,7 @@ fi
 setup_cgroup
 trap cleanup_cgroup EXIT
 
-printf -v quoted_cmd '%q ' "${command[@]}"
 wrapper_init="ip link set lo up >/dev/null 2>&1 || true"
-exec_cmd="${quoted_cmd% }"
 if [[ "$should_drop_priv" -eq 1 ]]; then
   run_line=$(printf 'runuser -u %q -- %s' "$target_user" "$exec_cmd")
 else

@@ -126,6 +126,7 @@ For teams that prefer a fully automated workflow (or stakeholders who want to av
 - Allow mode requires a root-owned, non-writable policy file (`MAESTRO_SANDBOX_NET_ALLOW_FILE`, default `/etc/maestro/sandbox-net-allow`). The build ships this file with `ALLOW_HOST_NETWORK=1` and `0400` permissions; add additional host patterns (one per line) beneath the flag to restrict outbound destinations. The sandbox reads the policy before dropping privileges, so no extra ACLs are required, but any custom permissions must remain read-only. If no hosts are listed, all outbound destinations are permitted once allow mode is active.
 - Override `MAESTRO_SANDBOX_NET_ALLOW_FILE` to point at your own policy file if you need to manage it externally; the same ownership/permission checks apply.
 - Resource ceilings are configurable via `MAESTRO_SANDBOX_MEMORY` (e.g., `512M` or `max`), `MAESTRO_SANDBOX_CPU_QUOTA_US` / `MAESTRO_SANDBOX_CPU_PERIOD_US`, and `MAESTRO_SANDBOX_PIDS_MAX`; see `scripts/maestro-sandbox.sh` for defaults.
+- If the host kernel forbids user namespaces or Bubblewrap is missing, Maestro logs a warning and runs the helper without sandbox isolation (still honouring the configured run-as user). Enable user namespaces or run in a privileged container to regain full confinement.
 
 ## Security Hardening
 ```sh

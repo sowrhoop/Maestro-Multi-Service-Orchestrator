@@ -282,9 +282,13 @@ ensure_program_dirs() {
   name="$1"; user="$2"
   program_paths "$name" "$user"
 
+  local failed=0
+
   for dir in "$PROGRAM_RUNTIME_DIR" "$PROGRAM_TMP_DIR" "$PROGRAM_CACHE_DIR" "$PROGRAM_VENV_DIR"; do
     mkdir -p "$dir"
-    chown "$user":"$user" "$dir" 2>/dev/null || true
+    if ! chown "$user":"$user" "$dir" 2>/dev/null; then
+      failed=1
+    fi
     case "$dir" in
       "$PROGRAM_CACHE_DIR"|"$PROGRAM_TMP_DIR")
         chmod 700 "$dir" 2>/dev/null || true
@@ -297,9 +301,13 @@ ensure_program_dirs() {
 
   for sub in pip npm pnpm yarn; do
     mkdir -p "${PROGRAM_CACHE_DIR}/${sub}"
-    chown "$user":"$user" "${PROGRAM_CACHE_DIR}/${sub}" 2>/dev/null || true
+    if ! chown "$user":"$user" "${PROGRAM_CACHE_DIR}/${sub}" 2>/dev/null; then
+      failed=1
+    fi
     chmod 700 "${PROGRAM_CACHE_DIR}/${sub}" 2>/dev/null || true
   done
+
+  return "$failed"
 }
 
 sandbox_exec() {
@@ -307,25 +315,37 @@ sandbox_exec() {
   shift 3
   [ $# -gt 0 ] || { echo "sandbox_exec: command missing" >&2; return 1; }
 
-  ensure_program_dirs "$name" "$user"
+  if ! ensure_program_dirs "$name" "$user"; then
+    echo "sandbox_exec: unable to assign ownership of runtime directories to $user; running without user drop" >&2
+    user=""
+  fi
 
-  if ! user_uid=$(id -u "$user" 2>/dev/null); then
-    echo "sandbox_exec: unable to resolve uid for $user" >&2
-    return 1
+  target_user="$user"
+  target_uid=""
+  target_gid=""
+
+  if [ -n "$target_user" ]; then
+    if ! target_uid=$(id -u "$target_user" 2>/dev/null); then
+      echo "sandbox_exec: unable to resolve uid for $target_user; running without user drop" >&2
+      target_user=""
+    fi
   fi
-  if ! user_gid=$(id -g "$user" 2>/dev/null); then
-    echo "sandbox_exec: unable to resolve gid for $user" >&2
-    return 1
+  if [ -n "$target_user" ]; then
+    if ! target_gid=$(id -g "$target_user" 2>/dev/null); then
+      echo "sandbox_exec: unable to resolve gid for $target_user; running without user drop" >&2
+      target_user=""
+    fi
   fi
+
   env \
     MAESTRO_SANDBOX_NAME="$name" \
     MAESTRO_SANDBOX_PROJECT="$workdir" \
     MAESTRO_SANDBOX_TMP="$PROGRAM_TMP_DIR" \
     MAESTRO_SANDBOX_CACHE="$PROGRAM_CACHE_DIR" \
     MAESTRO_SANDBOX_VENV="$PROGRAM_VENV_DIR" \
-    MAESTRO_SANDBOX_RUNAS_USER="$user" \
-    MAESTRO_SANDBOX_RUNAS_UID="$user_uid" \
-    MAESTRO_SANDBOX_RUNAS_GID="$user_gid" \
+    MAESTRO_SANDBOX_RUNAS_USER="${target_user:-}" \
+    MAESTRO_SANDBOX_RUNAS_UID="${target_uid:-}" \
+    MAESTRO_SANDBOX_RUNAS_GID="${target_gid:-}" \
     HOME="$PROGRAM_USER_HOME" \
     PIP_INSTALL_OPTIONS="${PIP_INSTALL_OPTIONS:-}" \
     NPM_INSTALL_OPTIONS="${NPM_INSTALL_OPTIONS:-}" \
