@@ -535,7 +535,7 @@ write_program_conf() {
   fi
 
   env_line=$(printf 'HOME="%s",TMPDIR="%s",XDG_CACHE_HOME="%s",MAESTRO_SANDBOX_NAME="%s",MAESTRO_SANDBOX_PROJECT="%s",MAESTRO_SANDBOX_TMP="%s",MAESTRO_SANDBOX_CACHE="%s",MAESTRO_SANDBOX_VENV="%s"' \
-    "$(escape_env_value "/home/${user}")" \
+    "$(escape_env_value "$PROGRAM_USER_HOME")" \
     "$(escape_env_value "$PROGRAM_TMP_DIR")" \
     "$(escape_env_value "$PROGRAM_CACHE_DIR")" \
     "$(escape_env_value "$name")" \
