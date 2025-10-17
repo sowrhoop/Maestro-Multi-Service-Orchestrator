@@ -312,7 +312,7 @@ ensure_program_dirs() {
   done
 
   if [ "$failed" -eq 0 ] && command -v runuser >/dev/null 2>&1; then
-    if ! runuser -u "$user" -- test -w "$PROGRAM_TMP_DIR" 2>/dev/null; then
+    if ! runuser -u "$user" -- sh -c "tmpfile=\"${PROGRAM_TMP_DIR}/.__maestro_write_test\"; touch \"\$tmpfile\" && rm -f \"\$tmpfile\"" >/dev/null 2>&1; then
       failed=1
     fi
   fi
