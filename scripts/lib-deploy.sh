@@ -292,6 +292,12 @@ ensure_program_dirs() {
     mkdir -p "$dir"
     if ! chown "$user":"$user" "$dir" 2>/dev/null; then
       failed=1
+    else
+      if ! owner=$(stat -c '%u' "$dir" 2>/dev/null); then
+        failed=1
+      elif [ "$owner" != "$(id -u "$user" 2>/dev/null)" ]; then
+        failed=1
+      fi
     fi
     case "$dir" in
       "$PROGRAM_CACHE_DIR"|"$PROGRAM_TMP_DIR")
@@ -307,6 +313,12 @@ ensure_program_dirs() {
     mkdir -p "${PROGRAM_CACHE_DIR}/${sub}"
     if ! chown "$user":"$user" "${PROGRAM_CACHE_DIR}/${sub}" 2>/dev/null; then
       failed=1
+    else
+      if ! owner=$(stat -c '%u' "${PROGRAM_CACHE_DIR}/${sub}" 2>/dev/null); then
+        failed=1
+      elif [ "$owner" != "$(id -u "$user" 2>/dev/null)" ]; then
+        failed=1
+      fi
     fi
     chmod 700 "${PROGRAM_CACHE_DIR}/${sub}" 2>/dev/null || true
   done
