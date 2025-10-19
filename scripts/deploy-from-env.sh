@@ -13,10 +13,14 @@ if [ "${1:-}" = "--prepare-only" ]; then PREPARE_ONLY=1; shift; fi
 
 provision_one() {
   REPO="$1"; PORT_IN="$2"; REF="${3:-main}"; NAME_IN="${4:-}"; USER_IN="${5:-}"; CMD_IN="${6:-}";
-  [ -z "$REPO" ] && { echo "Repo/source required" >&2; return 1; }
+  [ -n "$REPO" ] || { printf '%s\n' "Repo/source required" >&2; return 1; }
 
   NAME=${NAME_IN:-$(derive_name "$REPO")}
   NAME=$(sanitize "$NAME")
+  if [ -z "$NAME" ]; then
+    NAME="svc_$(date +%s)_$$"
+    NAME=$(sanitize "$NAME")
+  fi
   DEFAULT_USER="svc_${NAME}"
   USER=${USER_IN:-$(derive_project_user "$NAME" "$DEFAULT_USER" "")}
   ensure_user "$USER"
@@ -27,9 +31,13 @@ provision_one() {
   fetch_tar_into_dir "$URL" "$DEST" "$USER" "$NAME"
   install_deps_if_any "$DEST" "$NAME" "$USER"
 
-  RESOLVED_PORT=$(maestro_resolve_port "$PORT_IN") || { echo "Unable to allocate port for ${NAME}" >&2; return 1; }
+  RESOLVED_PORT=$(maestro_resolve_port "$PORT_IN") || { printf '%s\n' "Unable to allocate port for ${NAME}" >&2; return 1; }
 
   CMD=${CMD_IN:-$(detect_default_cmd "$DEST" "$RESOLVED_PORT")}
+  CMD=$(printf '%s\n' "$CMD" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+  if [ -z "$CMD" ]; then
+    CMD=$(detect_default_cmd "$DEST" "$RESOLVED_PORT")
+  fi
   chown -R "$USER":"$USER" "$DEST" || true
   chmod -R 750 "$DEST" || true
   printf '%s\n' "$NAME" >"${DEST}/.maestro-name" 2>/dev/null || true
@@ -40,15 +48,22 @@ provision_one() {
 }
 
 if [ -n "${SERVICES:-}" ]; then
-  IFS=';' ; set -- $SERVICES ; unset IFS
-  for ITEM in "$@"; do
-    [ -z "$ITEM" ] && continue
+  OLDIFS=$IFS
+  IFS=';'
+  for ITEM in $SERVICES; do
+    ITEM_TRIM=$(printf '%s' "$ITEM" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+    [ -n "$ITEM_TRIM" ] || continue
     IFS='|' read -r REP PORT REF NAME USER CMD <<EOF
-$ITEM
+$ITEM_TRIM
 EOF
-    provision_one "$REP" "$PORT" "${REF:-main}" "${NAME:-}" "${USER:-}" "${CMD:-}"
+    [ -n "${REP:-}" ] || continue
+    provision_one "$REP" "${PORT:-}" "${REF:-main}" "${NAME:-}" "${USER:-}" "${CMD:-}"
   done
+  IFS=$OLDIFS
 elif [ -n "${SERVICES_COUNT:-}" ]; then
+  case "$SERVICES_COUNT" in
+    ''|*[!0-9]*) printf '%s\n' "SERVICES_COUNT must be numeric" >&2; exit 1;;
+  esac
   i=1
   while [ "$i" -le "$SERVICES_COUNT" ]; do
     eval REP="\${SVC_${i}_REPO:-}"
@@ -57,11 +72,13 @@ elif [ -n "${SERVICES_COUNT:-}" ]; then
     eval NAME="\${SVC_${i}_NAME:-}"
     eval USER="\${SVC_${i}_USER:-}"
     eval CMD="\${SVC_${i}_CMD:-}"
-    provision_one "$REP" "$PORT" "$REF" "$NAME" "$USER" "$CMD"
+    if [ -n "${REP:-}" ]; then
+      provision_one "$REP" "$PORT" "$REF" "$NAME" "$USER" "$CMD"
+    fi
     i=$((i+1))
   done
 else
-  echo "No SERVICES or SERVICES_COUNT env provided" >&2
+  printf '%s\n' "No SERVICES or SERVICES_COUNT env provided" >&2
 fi
 
 if [ "$PREPARE_ONLY" -eq 0 ]; then

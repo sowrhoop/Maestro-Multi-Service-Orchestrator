@@ -19,11 +19,12 @@ status_map = {}
 try:
     proc = subprocess.run(['supervisorctl', 'status'], check=False, capture_output=True, text=True)
     for line in proc.stdout.splitlines():
-        parts = line.split()
-        if not parts:
+        stripped = line.strip()
+        if not stripped:
             continue
+        parts = stripped.split(None, 2)
         name = parts[0]
-        status = ' '.join(parts[1:3]).strip('[]') if len(parts) > 1 else ''
+        status = parts[1] if len(parts) > 1 else ''
         status_map[name] = status
 except Exception:
     pass
@@ -38,16 +39,25 @@ for path in files:
         continue
     for section in parser.sections():
         command_raw = parser.get(section, 'command', fallback='')
+        actual_cmd = command_raw
         try:
             tokens = shlex.split(command_raw)
         except ValueError:
             tokens = []
-        actual_cmd = tokens[2] if len(tokens) >= 3 and tokens[0] == '/bin/sh' and tokens[1] == '-c' else command_raw
+        if tokens:
+            if tokens[0].endswith('maestro-sandbox') and '--' in tokens:
+                dash_index = tokens.index('--')
+                tail = tokens[dash_index + 1 :]
+                if len(tail) >= 3 and tail[0].endswith('/sh') and tail[1] in ('-c', '-lc'):
+                    actual_cmd = tail[2]
+            elif len(tokens) >= 3 and tokens[0].endswith('/sh') and tokens[1] in ('-c', '-lc'):
+                actual_cmd = tokens[2]
+        display_name = section.split(":", 1)[-1] if section.startswith("program:") else section
         items.append({
-            'name': section,
+            'name': display_name,
             'user': parser.get(section, 'user', fallback=''),
             'directory': parser.get(section, 'directory', fallback=''),
-            'status': status_map.get(section, ''),
+            'status': status_map.get(display_name, ''),
             'command': actual_cmd,
         })
 

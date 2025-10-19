@@ -71,6 +71,13 @@ if parser and parser.sections():
         tokens = []
     if len(tokens) >= 3 and tokens[0] == '/bin/sh' and tokens[1] == '-c':
         command = tokens[2]
+    elif tokens and tokens[0].endswith('maestro-sandbox') and '--' in tokens:
+        sep = tokens.index('--')
+        tail = tokens[sep + 1 :]
+        if len(tail) >= 3 and tail[0].endswith('/sh') and tail[1] in ('-c', '-lc'):
+            command = tail[2]
+        else:
+            command = command_raw
     else:
         command = command_raw
 print(f"{user}|{directory}|{command}")
