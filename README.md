@@ -72,10 +72,13 @@ docker exec -it maestro list-services
 docker exec -it maestro supervisorctl status
 ```
 
+Provisioning helpers emit structured logs (including a summary of successful services); tune verbosity with `MAESTRO_LOG_LEVEL=debug|info|warn|error`.
+
 ## Configuration Reference
 
 ### Entrypoint & Supervisor Controls
 - `ENTRYPOINT_LOG_LEVEL`: adjust runtime verbosity (`debug`, `info`, `warn`, `error`; default `info`).
+- `MAESTRO_LOG_LEVEL`: controls logging for provisioning helpers (`deploy-from-env`, `deploy`, `remove-service`, shared `lib-deploy.sh`); accepts the same levels as `ENTRYPOINT_LOG_LEVEL` and defaults to `info`.
 - `SUPERVISOR_CONF_DIR`: override where generated program configs are written/read (default `/etc/supervisor/conf.d`). CLI helpers (`list-services`, `remove-service`) honour the same variable.
 - Generated program environments automatically expose `/opt/venv-<name>/bin` and `<project>/node_modules/.bin` on `PATH` when those directories exist.
 

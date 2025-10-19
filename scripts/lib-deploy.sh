@@ -8,6 +8,40 @@ IPTABLES_CMD=${MAESTRO_IPTABLES_BIN:-iptables}
 MAESTRO_RESERVED_PORTS=${MAESTRO_RESERVED_PORTS:-}
 export MAESTRO_RESERVED_PORTS
 
+MAESTRO_LOG_LEVEL=${MAESTRO_LOG_LEVEL:-info}
+
+maestro__to_lower() {
+  printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
+}
+
+maestro__log_level_value() {
+  case "$(maestro__to_lower "$1")" in
+    debug) printf '0';;
+    info) printf '1';;
+    warn|warning) printf '2';;
+    error|err) printf '3';;
+    *) printf '1';;
+  esac
+}
+
+maestro_log_emit() {
+  level_name="$1"; shift
+  level_value=$(maestro__log_level_value "$level_name")
+  current_value=$(maestro__log_level_value "${MAESTRO_LOG_LEVEL:-info}")
+  if [ "$level_value" -lt "$current_value" ]; then
+    return 0
+  fi
+  if [ $# -eq 0 ]; then
+    return 0
+  fi
+  printf '[maestro][%s] %s\n' "$level_name" "$*" >&2
+}
+
+maestro_log_debug() { maestro_log_emit debug "$@"; }
+maestro_log_info()  { maestro_log_emit info "$@"; }
+maestro_log_warn()  { maestro_log_emit warn "$@"; }
+maestro_log_error() { maestro_log_emit error "$@"; }
+
 sanitize() {
   printf "%s" "$1" | tr '[:upper:] ' '[:lower:]-' | sed 's/[^a-z0-9._-]//g'
 }
@@ -128,6 +162,7 @@ register_service_port() {
   mv "$tmp" "$ledger"
   chmod 600 "$ledger" 2>/dev/null || true
   maestro_reserve_port "$port" >/dev/null 2>&1 || true
+  maestro_log_debug "Recorded port ${port} for ${name}"
 }
 
 remove_service_port() {
@@ -140,6 +175,7 @@ remove_service_port() {
   awk -F'|' -v key="$name" 'NF>=2 && $1 != key {print $0}' "$ledger" >"$tmp"
   mv "$tmp" "$ledger"
   chmod 600 "$ledger" 2>/dev/null || true
+  maestro_log_debug "Removed port ledger entry for ${name}"
 }
 
 list_registered_ports() {
@@ -236,6 +272,7 @@ maestro_resolve_port() {
     esac
     maestro_reserve_port "$requested"
     printf '%s' "$requested"
+    maestro_log_debug "Reserved requested port ${requested}"
     return 0
   fi
   candidate=$(maestro_find_free_port "$used")
@@ -244,6 +281,7 @@ maestro_resolve_port() {
     return 1
   fi
   maestro_reserve_port "$candidate"
+  maestro_log_debug "Auto-selected free port ${candidate}"
   printf '%s' "$candidate"
 }
 
@@ -371,7 +409,7 @@ ensure_program_dirs() {
   fallback_root="${MAESTRO_RUNTIME_FALLBACK_BASE:-/tmp/maestro-fallback}"
   [ -n "$fallback_root" ] || fallback_root="/tmp/maestro-fallback"
   fallback_home="${fallback_root}/${user:-root}"
-  echo "ensure_program_dirs: using fallback workspace ${fallback_home}" >&2
+  maestro_log_warn "ensure_program_dirs fallback to ${fallback_home}"
   program_paths "$name" "$user" "$fallback_home"
   mkdir -p "$fallback_home" 2>/dev/null || true
   chmod 755 "$fallback_home" 2>/dev/null || true
@@ -392,10 +430,12 @@ ensure_program_dirs() {
 sandbox_exec() {
   user="$1"; workdir="$2"; name="$3"
   shift 3
-  [ $# -gt 0 ] || { echo "sandbox_exec: command missing" >&2; return 1; }
+  [ $# -gt 0 ] || { maestro_log_error "sandbox_exec ${name}: command missing"; return 1; }
+
+  maestro_log_debug "sandbox_exec ${name} as ${user:-root} (workdir=${workdir})"
 
   if ! ensure_program_dirs "$name" "$user"; then
-    echo "sandbox_exec: unable to assign ownership of runtime directories to $user; running without user drop" >&2
+    maestro_log_warn "sandbox_exec ${name}: unable to assign ownership of runtime directories to ${user}; running without user drop"
     user=""
   fi
 
@@ -405,13 +445,13 @@ sandbox_exec() {
 
   if [ -n "$target_user" ]; then
     if ! target_uid=$(id -u "$target_user" 2>/dev/null); then
-      echo "sandbox_exec: unable to resolve uid for $target_user; running without user drop" >&2
+      maestro_log_warn "sandbox_exec ${name}: unable to resolve uid for ${target_user}; running without user drop"
       target_user=""
     fi
   fi
   if [ -n "$target_user" ]; then
     if ! target_gid=$(id -g "$target_user" 2>/dev/null); then
-      echo "sandbox_exec: unable to resolve gid for $target_user; running without user drop" >&2
+      maestro_log_warn "sandbox_exec ${name}: unable to resolve gid for ${target_user}; running without user drop"
       target_user=""
     fi
   fi
@@ -435,10 +475,10 @@ sandbox_exec() {
 
 fetch_tar_into_dir() {
   url="$1"; dest="$2"; user="$3"; name="$4"
-  [ -n "$url" ] || { echo "fetch_tar_into_dir: url missing" >&2; return 1; }
-  [ -n "$dest" ] || { echo "fetch_tar_into_dir: dest missing" >&2; return 1; }
-  [ -n "$user" ] || { echo "fetch_tar_into_dir: user missing" >&2; return 1; }
-  [ -n "$name" ] || { echo "fetch_tar_into_dir: program name missing" >&2; return 1; }
+  [ -n "$url" ] || { maestro_log_error "fetch_tar_into_dir: url missing"; return 1; }
+  [ -n "$dest" ] || { maestro_log_error "fetch_tar_into_dir: dest missing"; return 1; }
+  [ -n "$user" ] || { maestro_log_error "fetch_tar_into_dir: user missing"; return 1; }
+  [ -n "$name" ] || { maestro_log_error "fetch_tar_into_dir: program name missing"; return 1; }
 
   ensure_program_dirs "$name" "$user"
 
@@ -446,10 +486,13 @@ fetch_tar_into_dir() {
   chown "$user":"$user" "$dest" 2>/dev/null || true
   chmod 750 "$dest" 2>/dev/null || true
 
+  maestro_log_info "Fetching ${url} into ${dest} for ${name}"
+
   if ! sandbox_exec "$user" "$dest" "$name" /usr/local/lib/deploy/fetch-and-extract.sh "$url"; then
-    echo "fetch_tar_into_dir: failed to retrieve $url" >&2
+    maestro_log_error "fetch_tar_into_dir: failed to retrieve ${url}"
     return 1
   fi
+  maestro_log_debug "fetch_tar_into_dir: fetch succeeded for ${name}"
 
   return 0
 }
@@ -513,37 +556,77 @@ install_deps_if_any() {
   chown -R "$user":"$user" "$dir" 2>/dev/null || true
   chmod -R 750 "$dir" 2>/dev/null || true
 
+  have_python_manifest=0
   if [ -f "$dir/requirements.txt" ] || [ -f "$dir/pyproject.toml" ] || [ -f "$dir/setup.py" ]; then
-    sandbox_exec "$user" "$dir" "$name" /bin/sh -eu -c '
+    have_python_manifest=1
+  fi
+
+  if [ "$have_python_manifest" -eq 1 ]; then
+    maestro_log_info "Installing Python dependencies for ${name}"
+    if sandbox_exec "$user" "$dir" "$name" /bin/sh -u -c '
+      set -u
       venv="${MAESTRO_SANDBOX_VENV}"
       if [ ! -d "${venv}/bin" ]; then
         python3 -m venv "${venv}" >/dev/null 2>&1 || python3 -m venv "${venv}"
       fi
       PATH="${venv}/bin:${PATH}"
       export PATH
+      pip_cmd="python3 -m pip"
       install_opts="${PIP_INSTALL_OPTIONS:-}"
+      status=0
       if [ -f requirements.txt ]; then
         if [ -n "$install_opts" ]; then
-          pip install $install_opts -r requirements.txt || pip install $install_opts . || true
+          if ! $pip_cmd install $install_opts -r requirements.txt; then
+            status=$?
+            if ! $pip_cmd install $install_opts .; then
+              status=$?
+            else
+              status=0
+            fi
+          fi
         else
-          pip install -r requirements.txt || pip install . || true
+          if ! $pip_cmd install -r requirements.txt; then
+            status=$?
+            if ! $pip_cmd install .; then
+              status=$?
+            else
+              status=0
+            fi
+          fi
         fi
       elif [ -f pyproject.toml ] || [ -f setup.py ]; then
         if [ -n "$install_opts" ]; then
-          pip install $install_opts . || true
+          if ! $pip_cmd install $install_opts .; then
+            status=$?
+          fi
         else
-          pip install . || true
+          if ! $pip_cmd install .; then
+            status=$?
+          fi
         fi
       fi
-    '
+      if [ "$status" -ne 0 ]; then
+        printf "%s\n" "maestro: pip install failed (status=${status})" >&2
+      fi
+      exit "$status"
+    '; then
+      maestro_log_debug "Python dependencies ready for ${name}"
+    else
+      maestro_log_warn "Python dependency installation failed for ${name}"
+    fi
+  else
+    maestro_log_debug "No Python dependency manifest detected for ${name}"
   fi
 
   if [ -f "$dir/package.json" ]; then
-    sandbox_exec "$user" "$dir" "$name" /bin/sh -eu -c '
+    maestro_log_info "Installing Node dependencies for ${name}"
+    if sandbox_exec "$user" "$dir" "$name" /bin/sh -u -c '
+      set -u
       npm_flags="${NPM_INSTALL_OPTIONS:-}"
       if [ -z "$npm_flags" ]; then
         npm_flags="--omit=dev --no-audit --no-fund"
       fi
+      status=0
       if [ -f pnpm-lock.yaml ]; then
         pnpm_spec=""
         if [ -n "${PNPM_VERSION:-}" ]; then
@@ -551,9 +634,18 @@ install_deps_if_any() {
         fi
         (corepack enable || true)
         if ! command -v pnpm >/dev/null 2>&1; then
-          corepack prepare "pnpm${pnpm_spec}" --activate || npm install --global --no-audit --no-fund --loglevel=error --unsafe-perm=false "pnpm${pnpm_spec}"
+          if ! corepack prepare "pnpm${pnpm_spec}" --activate; then
+            npm install --global --no-audit --no-fund --loglevel=error --unsafe-perm=false "pnpm${pnpm_spec}" || true
+          fi
         fi
-        pnpm install --frozen-lockfile --prod || pnpm install --prod || true
+        if ! pnpm install --frozen-lockfile --prod; then
+          status=$?
+          if ! pnpm install --prod; then
+            status=$?
+          else
+            status=0
+          fi
+        fi
       elif [ -f yarn.lock ]; then
         yarn_spec=""
         if [ -n "${YARN_VERSION:-}" ]; then
@@ -561,30 +653,59 @@ install_deps_if_any() {
         fi
         (corepack enable || true)
         if ! command -v yarn >/dev/null 2>&1; then
-          corepack prepare "yarn${yarn_spec}" --activate || npm install --global --no-audit --no-fund --loglevel=error --unsafe-perm=false "yarn${yarn_spec}"
+          if ! corepack prepare "yarn${yarn_spec}" --activate; then
+            npm install --global --no-audit --no-fund --loglevel=error --unsafe-perm=false "yarn${yarn_spec}" || true
+          fi
         fi
-        yarn install --frozen-lockfile --production || yarn install --production || true
+        if ! yarn install --frozen-lockfile --production; then
+          status=$?
+          if ! yarn install --production; then
+            status=$?
+          else
+            status=0
+          fi
+        fi
       elif [ -f package-lock.json ]; then
-        npm ci $npm_flags || npm install $npm_flags || true
+        if ! npm ci $npm_flags; then
+          status=$?
+          if ! npm install $npm_flags; then
+            status=$?
+          else
+            status=0
+          fi
+        fi
       else
-        npm install $npm_flags || true
+        if ! npm install $npm_flags; then
+          status=$?
+        fi
       fi
-      npm cache clean --force || true
-    '
+      if [ "$status" -ne 0 ]; then
+        printf "%s\n" "maestro: npm/pnpm/yarn install failed (status=${status})" >&2
+      fi
+      npm cache clean --force >/dev/null 2>&1 || true
+      exit "$status"
+    '; then
+      maestro_log_debug "Node dependencies ready for ${name}"
+    else
+      maestro_log_warn "Node dependency installation failed for ${name}"
+    fi
+  else
+    maestro_log_debug "No Node manifest detected for ${name}"
   fi
 }
 
 write_program_conf() {
   name="$1"; dir="$2"; cmd="$3"; user="$4"
   ensure_program_dirs "$name" "$user"
+  maestro_log_info "Writing Supervisor program for ${name}"
   quoted_cmd=$(python3 -c 'import shlex,sys; print(shlex.quote(sys.argv[1]))' "$cmd")
   quoted_workdir=$(python3 -c 'import shlex,sys; print(shlex.quote(sys.argv[1]))' "$dir")
   if [ -z "$quoted_cmd" ]; then
-    echo "write_program_conf: failed to quote command for $name" >&2
+    maestro_log_error "write_program_conf: failed to quote command for ${name}"
     return 1
   fi
   if [ -z "$quoted_workdir" ]; then
-    echo "write_program_conf: failed to quote workdir for $name" >&2
+    maestro_log_error "write_program_conf: failed to quote workdir for ${name}"
     return 1
   fi
 
@@ -650,4 +771,5 @@ stderr_logfile=/dev/stderr
 stdout_logfile_maxbytes=0
 stderr_logfile_maxbytes=0
 EOF
+  maestro_log_debug "Supervisor program written to ${SUPERVISOR_CONF_DIR}/program-${name}.conf"
 }

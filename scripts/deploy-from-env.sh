@@ -5,6 +5,8 @@ set -eu
 PREPARE_ONLY=0
 if [ "${1:-}" = "--prepare-only" ]; then PREPARE_ONLY=1; shift; fi
 
+PROVISIONED_SERVICES=""
+
 # Parse project specs from env.
 # Supported forms:
 # - SERVICES="repo|port|ref|name|user|cmd; repo2|port2|..."
@@ -15,6 +17,8 @@ provision_one() {
   REPO="$1"; PORT_IN="$2"; REF="${3:-main}"; NAME_IN="${4:-}"; USER_IN="${5:-}"; CMD_IN="${6:-}";
   [ -n "$REPO" ] || { printf '%s\n' "Repo/source required" >&2; return 1; }
 
+  maestro_log_info "Provisioning service from ${REPO} (ref=${REF})"
+
   NAME=${NAME_IN:-$(derive_name "$REPO")}
   NAME=$(sanitize "$NAME")
   if [ -z "$NAME" ]; then
@@ -24,6 +28,7 @@ provision_one() {
   DEFAULT_USER="svc_${NAME}"
   USER=${USER_IN:-$(derive_project_user "$NAME" "$DEFAULT_USER" "")}
   ensure_user "$USER"
+  maestro_log_debug "Provision target name=${NAME} user=${USER}"
 
   DEST="/opt/projects/${NAME}"
   mkdir -p "$DEST"
@@ -45,6 +50,8 @@ provision_one() {
   write_program_conf "$NAME" "$DEST" "$CMD" "$USER"
   register_service_port "$NAME" "$RESOLVED_PORT"
   apply_firewall_rules || true
+  PROVISIONED_SERVICES="${PROVISIONED_SERVICES} ${NAME}"
+  maestro_log_info "Provisioned ${NAME} on port ${RESOLVED_PORT}"
 }
 
 if [ -n "${SERVICES:-}" ]; then
@@ -57,7 +64,9 @@ if [ -n "${SERVICES:-}" ]; then
 $ITEM_TRIM
 EOF
     [ -n "${REP:-}" ] || continue
-    provision_one "$REP" "${PORT:-}" "${REF:-main}" "${NAME:-}" "${USER:-}" "${CMD:-}"
+    if ! provision_one "$REP" "${PORT:-}" "${REF:-main}" "${NAME:-}" "${USER:-}" "${CMD:-}"; then
+      maestro_log_error "Failed to provision service from ${REP}"
+    fi
   done
   IFS=$OLDIFS
 elif [ -n "${SERVICES_COUNT:-}" ]; then
@@ -73,7 +82,9 @@ elif [ -n "${SERVICES_COUNT:-}" ]; then
     eval USER="\${SVC_${i}_USER:-}"
     eval CMD="\${SVC_${i}_CMD:-}"
     if [ -n "${REP:-}" ]; then
-      provision_one "$REP" "$PORT" "$REF" "$NAME" "$USER" "$CMD"
+      if ! provision_one "$REP" "$PORT" "$REF" "$NAME" "$USER" "$CMD"; then
+        maestro_log_error "Failed to provision service from ${REP}"
+      fi
     fi
     i=$((i+1))
   done
@@ -85,4 +96,11 @@ if [ "$PREPARE_ONLY" -eq 0 ]; then
   supervisorctl reread >/dev/null 2>&1 || true
   supervisorctl update >/dev/null 2>&1 || true
   supervisorctl status || true
+fi
+
+trimmed_services=$(printf '%s' "$PROVISIONED_SERVICES" | sed 's/^[[:space:]]*//')
+if [ -n "$trimmed_services" ]; then
+  maestro_log_info "Provisioned services: $trimmed_services"
+else
+  maestro_log_warn "No services were provisioned"
 fi

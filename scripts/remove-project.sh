@@ -40,7 +40,7 @@ done
 
 CONF="${SUPERVISOR_CONF_DIR}/program-${NAME}.conf"
 if [ ! -f "$CONF" ]; then
-  echo "No program conf found for '${NAME}' at $CONF" >&2
+  maestro_log_warn "No program conf found for '${NAME}' at ${CONF}"
 fi
 
 # Extract attributes before removing conf
@@ -87,17 +87,17 @@ EOF
   IFS=$(printf ' \t\n')
 fi
 
-run() { [ $DRY -eq 1 ] && echo "+ $*" || sh -c "$*"; }
+run() { [ $DRY -eq 1 ] && printf '+ %s\n' "$*" || sh -c "$*"; }
 
-echo "Stopping ${NAME} (if running)"
+maestro_log_info "Stopping ${NAME} (if running)"
 run "supervisorctl stop ${NAME} >/dev/null 2>&1 || true"
 
 if [ -f "$CONF" ]; then
-  echo "Removing program conf: $CONF"
+  maestro_log_info "Removing program conf: ${CONF}"
   run "rm -f '$CONF'"
 fi
 
-echo "Reloading Supervisor"
+maestro_log_info "Reloading Supervisor"
 run "supervisorctl reread >/dev/null 2>&1 || true"
 run "supervisorctl update >/dev/null 2>&1 || true"
 
@@ -105,20 +105,21 @@ if [ $PURGE -eq 1 ]; then
   DIR_DEFAULT="/opt/projects/${NAME}"
   VENV_DIR="/opt/venv-${NAME}"
   TMP1="/tmp/${NAME}-tmp"; TMP2="/tmp/${NAME}-cache"
-  echo "Purging files: $DIR_DEFAULT $DIR_FROM_CONF $VENV_DIR $TMP1 $TMP2"
+  maestro_log_info "Purging files: ${DIR_DEFAULT} ${DIR_FROM_CONF} ${VENV_DIR} ${TMP1} ${TMP2}"
   run "rm -rf -- '$DIR_DEFAULT' '$DIR_FROM_CONF' '$VENV_DIR' '$TMP1' '$TMP2'"
 fi
 
 if [ $DELUSER -eq 1 ]; then
   U="${USER_FROM_CONF:-svc_${NAME}}"
   case "$U" in svc_*|${NAME}|svc_${NAME})
-    echo "Deleting user: $U (and home)"
+    maestro_log_info "Deleting user: ${U} (and home)"
     run "userdel -r '$U' 2>/dev/null || true" ;;
-    *) echo "Refusing to delete non-project user '$U'" >&2 ;;
+    *) maestro_log_warn "Refusing to delete non-project user '${U}'" ;;
   esac
 fi
 
 remove_service_port "$NAME" || true
 apply_firewall_rules || true
 
-echo "Done. Current programs:" && supervisorctl status || true
+maestro_log_info "Done. Current programs:"
+supervisorctl status || true
